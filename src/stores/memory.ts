@@ -70,6 +70,11 @@ export class MemoryStore implements VisaStore {
 		if (token !== undefined) token.revokedAt = at;
 	}
 
+	async touchAccessToken(tokenHash: string, at: Date): Promise<void> {
+		const token = this.#accessTokens.get(tokenHash);
+		if (token !== undefined) token.lastUsedAt = at;
+	}
+
 	async saveRefreshToken(token: RefreshToken): Promise<void> {
 		this.#refreshTokens.set(token.tokenHash, token);
 	}

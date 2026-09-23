@@ -121,9 +121,17 @@ export async function revoke(
  */
 export async function verifyAccessToken(
 	presented: string,
-	store: VisaStore,
+	// Only the one read: a resource server that keeps nothing but tokens should
+	// not have to implement eleven methods it never calls.
+	store: Pick<VisaStore, "findAccessToken">,
 	now: Date = new Date(),
-): Promise<{ clientId: string; userId?: string; scopes: string[] } | null> {
+): Promise<{
+	clientId: string;
+	userId?: string;
+	scopes: string[];
+	expiresAt: Date;
+	lastUsedAt?: Date;
+} | null> {
 	const token = await store.findAccessToken(hashSecret(presented));
 	if (token === null) return null;
 	if (token.revokedAt !== undefined || token.expiresAt <= now) return null;
@@ -131,6 +139,12 @@ export async function verifyAccessToken(
 		clientId: token.clientId,
 		...(token.userId === undefined ? {} : { userId: token.userId }),
 		scopes: token.scopes,
+		// Carried out so a caller can report the expiry it just checked, rather
+		// than reading the store a second time to say the same thing.
+		expiresAt: token.expiresAt,
+		// The PREVIOUS use, before this one is recorded — which is what the
+		// upstream guard shows on `currentAccessToken.lastUsedAt`.
+		...(token.lastUsedAt === undefined ? {} : { lastUsedAt: token.lastUsedAt }),
 	};
 }
 

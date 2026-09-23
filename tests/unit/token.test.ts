@@ -45,6 +45,8 @@ describe("visa > token > the authorization code grant", () => {
 			clientId: h.client.id,
 			userId: "user-1",
 			scopes: ["profile"],
+			// Carried out so the guard can answer `isExpired()` without a second read.
+			expiresAt: expect.any(Date),
 		});
 	});
 

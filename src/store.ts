@@ -51,6 +51,15 @@ export interface VisaStore {
 	findConsent(userId: string, clientId: string): Promise<Consent | null>;
 	saveConsent(consent: Consent): Promise<void>;
 
+	/**
+	 * Record that an access token was just used.
+	 *
+	 * Optional, and deliberately best-effort: it is one write per authenticated
+	 * request, which a store on a hot path may not want. A store without it
+	 * authenticates exactly the same, it simply reports no last use.
+	 */
+	touchAccessToken?(tokenHash: string, at: Date): Promise<void>;
+
 	/** Drop what has expired. Optional: a store with a TTL does it itself. */
 	prune?(now: Date): Promise<void>;
 }

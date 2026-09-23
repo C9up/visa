@@ -99,6 +99,7 @@ describe("visa > testing helper", () => {
 			clientId: t.client.id,
 			userId: "user-7",
 			scopes: ["profile"],
+			expiresAt: expect.any(Date),
 		});
 	});
 

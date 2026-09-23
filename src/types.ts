@@ -70,6 +70,13 @@ export interface AccessToken {
 	expiresAt: Date;
 	revokedAt?: Date;
 	/**
+	 * When this token was last presented, if the store records it.
+	 *
+	 * What an "Applications connectées" screen shows next to each authorisation,
+	 * and what tells a dormant token from a live one.
+	 */
+	lastUsedAt?: Date;
+	/**
 	 * The refresh family this token was minted in, when there is one.
 	 *
 	 * Without it, revoking a leaked family would leave the access token it

@@ -39,6 +39,16 @@ export {
 	type TokenErrorCode,
 	VisaError,
 } from "./errors.js";
+export {
+	type GuardClientResponse,
+	type GuardResult,
+	type GuardStore,
+	type GuardUser,
+	VisaAccessToken,
+	VisaGuard,
+	type VisaGuardConfig,
+	visaGuard,
+} from "./guard.js";
 export { introspect, revoke, verifyAccessToken } from "./introspect.js";
 export {
 	clearVisa,
