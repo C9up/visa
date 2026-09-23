@@ -49,14 +49,14 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
-    "@c9up/ream": "^0.2.0",
+    "@c9up/ream": "^0.2.26",
     "@types/node": "^22.20.1",
     "@vitest/coverage-v8": "4.1.11",
     "typescript": "^6.0.3",
     "vitest": "4.1.11"
   },
   "peerDependencies": {
-    "@c9up/ream": "^0.2.0"
+    "@c9up/ream": "^0.2.26"
   },
   "peerDependenciesMeta": {
     "@c9up/ream": {
@@ -66,7 +66,7 @@
   "engines": {
     "node": ">=24.0.0"
   },
-  "files": ["src", "dist", "README.md", "LICENSE"],
+  "files": ["src", "dist", "stubs", "README.md", "LICENSE"],
   "publishConfig": {
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
