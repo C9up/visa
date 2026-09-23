@@ -21,6 +21,7 @@ export async function introspect(
 	credentials: ClientCredentials,
 	store: VisaStore,
 	now: Date = new Date(),
+	issuer?: string,
 ): Promise<IntrospectionResponse> {
 	// The CALLER authenticates — introspection tells you whether a credential
 	// is live, which is exactly what an attacker wants to ask.
@@ -48,6 +49,7 @@ export async function introspect(
 		if (access.clientId !== caller.id) return INACTIVE;
 		return {
 			active: true,
+			...(issuer === undefined ? {} : { iss: issuer }),
 			scope: access.scopes.join(" "),
 			client_id: access.clientId,
 			token_type: "Bearer",
@@ -68,6 +70,7 @@ export async function introspect(
 	}
 	return {
 		active: true,
+		...(issuer === undefined ? {} : { iss: issuer }),
 		scope: refresh.scopes.join(" "),
 		client_id: refresh.clientId,
 		exp: Math.floor(refresh.expiresAt.getTime() / 1000),

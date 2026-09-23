@@ -10,7 +10,7 @@
 
 import { secretMatches } from "./crypto.js";
 import { OAuthError } from "./errors.js";
-import type { Client, GrantType } from "./types.js";
+import type { Client, ClientAuthMethod, GrantType } from "./types.js";
 
 /**
  * Does this redirect URI match one the client registered?
@@ -63,6 +63,15 @@ function isLoopback(hostname: string): boolean {
 export interface ClientCredentials {
 	clientId?: string;
 	clientSecret?: string;
+	/**
+	 * WHERE they came from.
+	 *
+	 * A client registers one authentication method and must use that one: a
+	 * client declared `client_secret_basic` sending its secret in the body is
+	 * either misconfigured or being replayed by something that could only read
+	 * the body. Accepting both makes the registered method decorative.
+	 */
+	method?: ClientAuthMethod;
 	/** The raw `Authorization` header, if there was one. */
 	authorization?: string;
 }
@@ -100,7 +109,12 @@ export function readCredentials(input: {
 		}
 		return basic;
 	}
-	return { clientId: bodyId, clientSecret: bodySecret };
+	return {
+		clientId: bodyId,
+		...(bodySecret === undefined
+			? { method: "none" as const }
+			: { clientSecret: bodySecret, method: "client_secret_post" as const }),
+	};
 }
 
 function parseBasic(header?: string): ClientCredentials | undefined {
@@ -114,11 +128,19 @@ function parseBasic(header?: string): ClientCredentials | undefined {
 	if (separator === -1) {
 		throw new OAuthError("invalid_client", "Malformed Basic credentials.");
 	}
-	// RFC 6749 §2.3.1 form-encodes both halves before base64.
-	return {
-		clientId: decodeURIComponent(decoded.slice(0, separator)),
-		clientSecret: decodeURIComponent(decoded.slice(separator + 1)),
-	};
+	// RFC 6749 §2.3.1 form-encodes both halves before base64. A malformed
+	// escape throws `URIError`, which would leave the endpoint answering 500
+	// to anything that sends `Basic %zz` — an unauthenticated caller choosing
+	// the failure mode.
+	try {
+		return {
+			clientId: decodeURIComponent(decoded.slice(0, separator)),
+			clientSecret: decodeURIComponent(decoded.slice(separator + 1)),
+			method: "client_secret_basic",
+		};
+	} catch {
+		throw new OAuthError("invalid_client", "Malformed Basic credentials.");
+	}
 }
 
 function stringOrUndefined(value: unknown): string | undefined {
@@ -141,6 +163,15 @@ export async function authenticateClient(
 	}
 	const client = await load(credentials.clientId);
 	if (client === null) {
+		throw new OAuthError("invalid_client", "Client authentication failed.");
+	}
+
+	// The registered method is the only one accepted. Checked before the
+	// secret so a client cannot pick the weaker of two paths.
+	if (
+		credentials.method !== undefined &&
+		credentials.method !== client.tokenEndpointAuthMethod
+	) {
 		throw new OAuthError("invalid_client", "Client authentication failed.");
 	}
 

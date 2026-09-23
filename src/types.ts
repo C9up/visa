@@ -117,6 +117,13 @@ export interface TokenResponse {
 /** The introspection body (RFC 7662 §2.2). */
 export interface IntrospectionResponse {
 	active: boolean;
+	/**
+	 * Which authorization server vouches for this token.
+	 *
+	 * An opaque token carries nothing by itself; the issuer is a property of
+	 * the SERVER, and this is where a caller gets to see it.
+	 */
+	iss?: string;
 	scope?: string;
 	client_id?: string;
 	username?: string;

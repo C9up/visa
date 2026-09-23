@@ -56,16 +56,10 @@ export class VisaManager {
 	readonly #config: VisaConfig;
 
 	constructor(config: VisaConfig) {
-		if (config.issuer === undefined || config.issuer === "") {
-			throw new VisaError(
-				"E_VISA_MISSING_ISSUER",
-				"visa needs an issuer — the public URL this authorization server answers on.",
-				{
-					hint: "Set `issuer` in config/visa.ts, e.g. https://auth.example.com",
-				},
-			);
-		}
-		this.#config = config;
+		// Validated here rather than at the first request: a server that boots
+		// with a broken issuer answers every metadata fetch with something no
+		// client can use, and says so nowhere.
+		this.#config = { ...config, issuer: normalizeIssuer(config.issuer) };
 	}
 
 	get issuer(): string {
@@ -92,6 +86,11 @@ export class VisaManager {
 		tokenEndpointAuthMethod?: ClientAuthMethod;
 		trusted?: boolean;
 	}): Promise<{ client: Client; secret?: string }> {
+		// Refused at registration, not at the first authorization request: a
+		// URI that cannot be parsed would otherwise throw out of
+		// `successRedirect`, turning a client's mistake into a 500 on a path
+		// an attacker can reach.
+		assertRedirectUris(input.redirectUris);
 		const method = input.tokenEndpointAuthMethod ?? "client_secret_basic";
 		const secret = method === "none" ? undefined : randomToken();
 		const client: Client = {
@@ -219,7 +218,7 @@ export class VisaManager {
 		credentials: ClientCredentials,
 		now: Date = new Date(),
 	): Promise<IntrospectionResponse> {
-		return introspect(body, credentials, this.#config.store, now);
+		return introspect(body, credentials, this.#config.store, now, this.issuer);
 	}
 
 	async revoke(
@@ -263,5 +262,85 @@ export class VisaManager {
 		return redirectUriMatches(request.redirect_uri, client.redirectUris)
 			? request.redirect_uri
 			: null;
+	}
+}
+
+/**
+ * The issuer, checked and trimmed.
+ *
+ * A trailing slash is not cosmetic here: every endpoint is built by
+ * concatenation, so `https://auth.test/` yields `https://auth.test//oauth/token`
+ * — a URL some clients normalise and others do not.
+ */
+function normalizeIssuer(issuer: string): string {
+	if (issuer === undefined || issuer === "") {
+		throw new VisaError(
+			"E_VISA_MISSING_ISSUER",
+			"visa needs an issuer — the public URL this authorization server answers on.",
+			{ hint: "Set `issuer` in config/visa.ts, e.g. https://auth.example.com" },
+		);
+	}
+	let url: URL;
+	try {
+		url = new URL(issuer);
+	} catch {
+		throw new VisaError(
+			"E_VISA_INVALID_ISSUER",
+			`visa's issuer is not a URL: ${issuer}`,
+			{ hint: "It is the public origin, e.g. https://auth.example.com" },
+		);
+	}
+	if (url.protocol !== "https:" && url.hostname !== "localhost") {
+		// Tokens travel to it. `http://` is for a laptop, and the exception is
+		// named so nobody has to guess whether it applies in production.
+		throw new VisaError(
+			"E_VISA_INSECURE_ISSUER",
+			`visa's issuer must be https (localhost excepted): ${issuer}`,
+		);
+	}
+	if (url.hash !== "" || url.search !== "") {
+		throw new VisaError(
+			"E_VISA_INVALID_ISSUER",
+			"visa's issuer must carry no query string and no fragment.",
+		);
+	}
+	return issuer.replace(/\/+$/, "");
+}
+
+/**
+ * Every redirect URI a client registers, checked once.
+ *
+ * A fragment is refused because the authorization response appends its own
+ * query and a fragment would swallow it; a wildcard because this server
+ * compares exactly and `*` would simply never match, silently.
+ */
+function assertRedirectUris(uris: readonly string[]): void {
+	if (uris.length === 0) {
+		throw new VisaError(
+			"E_VISA_NO_REDIRECT_URI",
+			"A client needs at least one redirect URI.",
+		);
+	}
+	for (const uri of uris) {
+		let url: URL;
+		try {
+			url = new URL(uri);
+		} catch {
+			throw new VisaError("E_VISA_INVALID_REDIRECT_URI", `Not a URL: ${uri}`, {
+				hint: "Register the complete URI, scheme and path included.",
+			});
+		}
+		if (url.hash !== "") {
+			throw new VisaError(
+				"E_VISA_INVALID_REDIRECT_URI",
+				`A redirect URI must carry no fragment: ${uri}`,
+			);
+		}
+		if (uri.includes("*")) {
+			throw new VisaError(
+				"E_VISA_INVALID_REDIRECT_URI",
+				`Wildcards are not matched, so this would never accept anything: ${uri}`,
+			);
+		}
 	}
 }

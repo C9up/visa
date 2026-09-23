@@ -141,6 +141,8 @@ describe("visa > provider", () => {
 			redirectUris: [REDIRECT],
 			scopes: ["reports"],
 			grantTypes: ["client_credentials"],
+			// Sends its secret in the body below, so that is what it registers.
+			tokenEndpointAuthMethod: "client_secret_post",
 		});
 		const handler = routes.get("POST /oauth/token");
 		if (!handler) throw new Error("no token route");

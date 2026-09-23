@@ -125,6 +125,19 @@ token directly. Not a lenient double on purpose: a helper that granted whatever
 was asked would teach applications to ship a consent screen nobody has seen
 refuse.
 
+## The issuer
+
+It identifies the SERVER, and that is all it does here. An access token is
+opaque — a random string with no claims inside — so nothing is "bound" to an
+issuer cryptographically; the only thing that can vouch for such a token is the
+server that minted it. That is why `/oauth/introspect` answers with `iss`, and
+why the metadata document names it.
+
+It is validated at boot rather than at the first request: it must be a URL,
+`https` (localhost excepted), with no query string and no fragment, and a
+trailing slash is dropped — every endpoint is built by concatenation, so
+`https://auth.test/` would otherwise produce `https://auth.test//oauth/token`.
+
 ## The store
 
 `MemoryStore` is for tests and a single development process. Everything else
