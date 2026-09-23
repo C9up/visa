@@ -1,0 +1,163 @@
+name: visa-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm_overwrite:
+        description: 'Type YES to override the drift gate (force-publish even if registry version >= package.json version). Use only for rollback scenarios.'
+        required: false
+        default: 'no'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Differentiated by event_name so a workflow_dispatch publish run is not
+  # cancelled by a subsequent push to main mid-flight.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with: { version: 9 }
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: pnpm install
+      - run: pnpm exec tsc -p tsconfig.build.json --noEmit
+      # And the tests: `tsconfig.build.json` leaves them out, so every type a
+      # test relies on went ungated until this step ran the project's own
+      # `tsconfig.json`, which includes them.
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+      # With coverage: the thresholds in vitest.config.ts are only a gate
+      # if something runs them.
+      - run: pnpm test:coverage
+
+  # Publish job — gated on workflow_dispatch (manual maintainer trigger).
+  # Requires NPM_TOKEN secret + a v<MAJOR>.<MINOR>.<PATCH> tag at HEAD matching
+  # package.json. Drift gate refuses to overwrite a published version (or roll
+  # back to an older one) without `confirm_overwrite=YES`.
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating the release needs write; the workflow default is read.
+      contents: write
+    timeout-minutes: 15
+    needs: [build-and-test]
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with: { version: 9 }
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Verify NPM_TOKEN secret
+        run: |
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "::error::NPM_TOKEN secret missing — set in repo settings before manual publish"
+            exit 1
+          fi
+
+      - name: Tag-vs-package.json gate
+        run: |
+          tag=$(git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          if [ -z "$tag" ]; then
+            echo "::error::HEAD has no v<MAJOR>.<MINOR>.<PATCH>-shaped tag — refuse to publish from an untagged commit"
+            exit 1
+          fi
+          pkg_v=$(node -p "require('./package.json').version")
+          pkg_tag="v${pkg_v}"
+          if [ "$tag" != "$pkg_tag" ]; then
+            echo "::error::Tag $tag does not match package.json $pkg_tag — refuse to publish from a drifted tag"
+            exit 1
+          fi
+          echo "Tag gate passed: $tag == $pkg_tag"
+
+      - name: Drift fail-closed gate
+        env:
+          CONFIRM_OVERWRITE: ${{ inputs.confirm_overwrite }}
+        run: |
+          local_v=$(node -p "require('./package.json').version")
+          npm_err=$(mktemp)
+          # `if` form so `set -e` (bash -e) does not abort the step when
+          # `npm view` exits non-zero (e.g. E404 on a first publish) — a bare
+          # assignment would die before `status=$?` and skip the E404 path.
+          if npm_v=$(npm view --fetch-timeout=30000 @c9up/visa version 2>"$npm_err"); then
+            status=0
+          else
+            status=$?
+          fi
+          err=$(cat "$npm_err"); rm -f "$npm_err"
+          if [ "$status" -ne 0 ]; then
+            if echo "$err" | grep -qE 'E404|404 Not Found'; then
+              echo "Drift gate: package not yet on registry — first-publish path (local $local_v)"
+              npm_v=""
+            else
+              echo "::error::Cannot reach npm registry — refuse to publish without a verified registry version. Output: $err"
+              exit 1
+            fi
+          fi
+          if [ -z "$npm_v" ]; then exit 0; fi
+          highest=$(printf '%s\n%s\n' "$npm_v" "$local_v" | sort -V | tail -1)
+          if [ "$local_v" = "$npm_v" ]; then
+            if [ "$CONFIRM_OVERWRITE" != "YES" ]; then
+              echo "::error::Local version $local_v already published — bump package.json or re-run with confirm_overwrite=YES"
+              exit 1
+            fi
+          elif [ "$highest" = "$npm_v" ]; then
+            if [ "$CONFIRM_OVERWRITE" != "YES" ]; then
+              echo "::error::Registry version $npm_v is newer than local $local_v — refuse to roll back without confirm_overwrite=YES"
+              exit 1
+            fi
+          else
+            echo "Drift gate passed: local $local_v > registry $npm_v"
+          fi
+
+      - run: pnpm install
+      # Fail the publish on a broken build — the published package points to
+      # `dist` (publishConfig), so a failed `tsc` must NOT be ignored.
+      - run: pnpm build
+      - run: pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Create the GitHub release
+        # Notes from the commits this tag contains. Without it a published
+        # version arrives with no explanation of what changed, and the only way
+        # to find out is to read a diff.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::notice::not built from a tag - no release to create"
+            exit 0
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::notice::release $tag already exists - leaving it alone"
+            exit 0
+          fi
+          prev="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)"
+          range="${tag}"
+          [ -n "$prev" ] && range="${prev}..${tag}"
+          notes="$(git log "$range" --no-merges --format='### %s%n%n%b%n' \
+            | grep -vE '^### [a-z0-9@/.-]+ [0-9]+\.[0-9]+\.[0-9]+$' || true)"
+          [ -z "${notes// }" ] && notes="_Version bump only - no behavioural change._"
+          [ -n "$prev" ] && notes="${notes}"$'\n\n---\n\n'"Changes since \`${prev}\`."
+          printf '%s\n' "$notes" | gh release create "$tag" --title "$tag" --notes-file -

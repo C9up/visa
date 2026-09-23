@@ -1,0 +1,81 @@
+{
+  "name": "@c9up/visa",
+  "version": "0.1.0",
+  "description": "Visa — OAuth 2.1 authorization server for the Ream framework: authorization code with PKCE, refresh rotation, revocation and introspection, on a store contract",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./config": {
+      "types": "./src/config.ts",
+      "import": "./src/config.ts"
+    },
+    "./provider": {
+      "types": "./src/VisaProvider.ts",
+      "import": "./src/VisaProvider.ts"
+    },
+    "./configure": {
+      "types": "./src/configure.ts",
+      "import": "./src/configure.ts"
+    },
+    "./services/main": {
+      "types": "./src/services/main.ts",
+      "import": "./src/services/main.ts"
+    },
+    "./stores/memory": {
+      "types": "./src/stores/memory.ts",
+      "import": "./src/stores/memory.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "import": "./src/types.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "lint": "biome check src/ tests/",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.12",
+    "@c9up/ream": "^0.2.0",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "4.1.11",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.11"
+  },
+  "peerDependencies": {
+    "@c9up/ream": "^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@c9up/ream": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "files": ["src", "dist", "stubs", "README.md", "LICENSE"],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+      "./config": { "types": "./dist/config.d.ts", "import": "./dist/config.js" },
+      "./provider": { "types": "./dist/VisaProvider.d.ts", "import": "./dist/VisaProvider.js" },
+      "./configure": { "types": "./dist/configure.d.ts", "import": "./dist/configure.js" },
+      "./services/main": { "types": "./dist/services/main.d.ts", "import": "./dist/services/main.js" },
+      "./stores/memory": { "types": "./dist/stores/memory.d.ts", "import": "./dist/stores/memory.js" },
+      "./types": { "types": "./dist/types.d.ts", "import": "./dist/types.js" }
+    },
+    "access": "public"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/C9up/visa.git" }
+}
