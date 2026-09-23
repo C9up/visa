@@ -107,6 +107,24 @@ if (!grant.scopes.includes('invoices:read')) {
 }
 ```
 
+## Testing
+
+`@c9up/visa/testing` hands back the REAL server on a memory store, with a
+client already registered:
+
+```ts
+import { testVisa } from '@c9up/visa/testing'
+
+const t = await testVisa({ scopes: ['profile', 'invoices:read'] })
+const tokens = await t.tokensFor('user-7', 'invoices:read')
+const grant = await t.visa.verify(tokens.access_token)
+```
+
+`tokensFor()` walks authorize → consent → code → exchange rather than minting a
+token directly. Not a lenient double on purpose: a helper that granted whatever
+was asked would teach applications to ship a consent screen nobody has seen
+refuse.
+
 ## The store
 
 `MemoryStore` is for tests and a single development process. Everything else
