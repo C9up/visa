@@ -80,6 +80,37 @@ describe("visa > configure", () => {
 		expect(file?.content).toContain("env.get('VISA_ISSUER')");
 	});
 
+	it("writes the migration for the tables the atlas store reads", async () => {
+		const { calls, codemods } = recorder();
+
+		await configure(codemods);
+
+		const migration = calls.files.find((file) =>
+			file.path.startsWith("database/migrations/"),
+		);
+		expect(migration?.path).toBe(
+			"database/migrations/9000_create_visa_tables.ts",
+		);
+		for (const table of [
+			"visa_clients",
+			"visa_authorization_codes",
+			"visa_access_tokens",
+			"visa_refresh_tokens",
+			"visa_consents",
+		]) {
+			expect(migration?.content, table).toContain(table);
+		}
+		// `t.timestamps()` emits `DEFAULT (NOW())`, which is not a sqlite
+		// function and fails at migration:run on a fresh sqlite app. Read off the
+		// code, not the prose — the comment in the stub names it to explain why.
+		const code = (migration?.content ?? "")
+			.split("\n")
+			.filter((line) => !line.trim().startsWith("*") && !line.includes("//"))
+			.join("\n");
+		expect(code).not.toContain("t.timestamps()");
+		expect(code).toContain('t.timestamp("created_at").notNullable()');
+	});
+
 	it("says in the config itself that the store has to be replaced", async () => {
 		// A memory store shipped to production loses every session on deploy.
 		const { calls, codemods } = recorder();

@@ -1,0 +1,103 @@
+---
+to: database/migrations/9000_create_visa_tables.ts
+---
+import { Migration } from "@c9up/atlas";
+
+/**
+ * What the authorization server keeps.
+ *
+ * Every credential column holds a HASH, never the value that was handed out —
+ * a dump of these tables is not a set of working tokens.
+ *
+ * Two portability rules are followed deliberately and should survive an edit:
+ *
+ * No `t.timestamps()`. It emits `DEFAULT (NOW())`, which is not a sqlite
+ * function and fails at `migration:run` on a fresh sqlite app. Every timestamp
+ * here is written explicitly by the store instead.
+ *
+ * Every string that is a primary key or an index stays well inside MySQL's
+ * InnoDB utf8mb4 limit of 3072 bytes (768 characters). A hash is 64 characters
+ * of hex; an identifier is capped at 255.
+ */
+export default class CreateVisaTables extends Migration {
+	async up() {
+		this.schema.createTable("visa_clients", (t) => {
+			t.string("id", 255).primary();
+			t.string("name", 255).notNullable();
+			// Null for a public client — a SPA or a native app has no secret to keep.
+			t.string("secret_hash", 255).nullable();
+			t.json("redirect_uris").notNullable();
+			t.json("grant_types").notNullable();
+			t.json("scopes").notNullable();
+			t.string("token_endpoint_auth_method", 32).notNullable();
+			t.boolean("trusted").notNullable();
+			t.timestamp("created_at").notNullable();
+		});
+
+		this.schema.createTable("visa_authorization_codes", (t) => {
+			t.string("code_hash", 64).primary();
+			t.string("client_id", 255).notNullable();
+			t.string("user_id", 255).notNullable();
+			t.text("redirect_uri").notNullable();
+			t.json("scopes").notNullable();
+			t.string("code_challenge", 128).notNullable();
+			t.string("code_challenge_method", 10).notNullable();
+			t.timestamp("expires_at").notNullable();
+			// Set the moment it is exchanged: the single-use guarantee is an
+			// UPDATE guarded on this column being null.
+			t.timestamp("consumed_at").nullable();
+			t.string("nonce", 255).nullable();
+			t.timestamp("created_at").notNullable();
+			t.index("user_id");
+		});
+
+		this.schema.createTable("visa_access_tokens", (t) => {
+			t.string("token_hash", 64).primary();
+			t.string("client_id", 255).notNullable();
+			// Null for `client_credentials`: there is no user behind that grant.
+			t.string("user_id", 255).nullable();
+			t.json("scopes").notNullable();
+			t.timestamp("expires_at").notNullable();
+			t.timestamp("revoked_at").nullable();
+			t.timestamp("last_used_at").nullable();
+			// The refresh family this token was minted in. Indexed because
+			// revoking a leaked family reads every token by it.
+			t.string("family_id", 64).nullable();
+			t.timestamp("created_at").notNullable();
+			t.index("family_id");
+			t.index("user_id");
+		});
+
+		this.schema.createTable("visa_refresh_tokens", (t) => {
+			t.string("token_hash", 64).primary();
+			t.string("family_id", 64).notNullable();
+			t.string("client_id", 255).notNullable();
+			t.string("user_id", 255).nullable();
+			t.json("scopes").notNullable();
+			t.timestamp("expires_at").notNullable();
+			t.timestamp("consumed_at").nullable();
+			t.timestamp("revoked_at").nullable();
+			t.timestamp("created_at").notNullable();
+			t.index("family_id");
+			t.index("user_id");
+		});
+
+		this.schema.createTable("visa_consents", (t) => {
+			t.string("user_id", 255).notNullable();
+			t.string("client_id", 255).notNullable();
+			t.json("scopes").notNullable();
+			t.timestamp("granted_at").notNullable();
+			// One consent per pair: asking twice for the same thing is the bug
+			// this table exists to prevent.
+			t.primary(["user_id", "client_id"]);
+		});
+	}
+
+	async down() {
+		this.schema.dropTable("visa_consents");
+		this.schema.dropTable("visa_refresh_tokens");
+		this.schema.dropTable("visa_access_tokens");
+		this.schema.dropTable("visa_authorization_codes");
+		this.schema.dropTable("visa_clients");
+	}
+}

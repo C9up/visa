@@ -57,6 +57,12 @@ export {
 	setVisa,
 } from "./services/main.js";
 export type { VisaStore } from "./store.js";
+export {
+	type AtlasDb,
+	type AtlasQuery,
+	AtlasStore,
+	type AtlasStoreTables,
+} from "./stores/atlas.js";
 export { MemoryStore } from "./stores/memory.js";
 export { type TokenOptions, type TokenRequest, token } from "./token.js";
 export type {
