@@ -16,6 +16,7 @@
  * Duck-typed throughout: visa must not import its host's HTTP types.
  */
 
+import "./augmentations.js";
 import type { VisaConfigInput } from "./config.js";
 import { OAuthError } from "./errors.js";
 import { clearVisa, getVisa, setVisa } from "./services/main.js";

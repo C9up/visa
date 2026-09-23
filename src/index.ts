@@ -10,6 +10,8 @@
  * in the provider.
  */
 
+import "./augmentations.js";
+
 export {
 	type AuthorizationRequest,
 	type AuthorizeOptions,

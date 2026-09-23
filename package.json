@@ -34,6 +34,10 @@
     "./types": {
       "types": "./src/types.ts",
       "import": "./src/types.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/main.ts",
+      "import": "./src/testing/main.ts"
     }
   },
   "scripts": {
@@ -62,7 +66,7 @@
   "engines": {
     "node": ">=24.0.0"
   },
-  "files": ["src", "dist", "stubs", "README.md", "LICENSE"],
+  "files": ["src", "dist", "README.md", "LICENSE"],
   "publishConfig": {
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
@@ -73,7 +77,8 @@
       "./configure": { "types": "./dist/configure.d.ts", "import": "./dist/configure.js" },
       "./services/main": { "types": "./dist/services/main.d.ts", "import": "./dist/services/main.js" },
       "./stores/memory": { "types": "./dist/stores/memory.d.ts", "import": "./dist/stores/memory.js" },
-      "./types": { "types": "./dist/types.d.ts", "import": "./dist/types.js" }
+      "./types": { "types": "./dist/types.d.ts", "import": "./dist/types.js" },
+      "./testing": { "types": "./dist/testing/main.d.ts", "import": "./dist/testing/main.js" }
     },
     "access": "public"
   },
