@@ -35,7 +35,17 @@ export type TokenErrorCode =
 	/** RFC 8707 §2. */
 	| "invalid_target";
 
-export type ProtocolErrorCode = AuthorizationErrorCode | TokenErrorCode;
+/** Error codes the registration endpoint may return (RFC 7591 §3.2.2). */
+export type RegistrationErrorCode =
+	| "invalid_redirect_uri"
+	| "invalid_client_metadata"
+	| "invalid_software_statement"
+	| "unapproved_software_statement";
+
+export type ProtocolErrorCode =
+	| AuthorizationErrorCode
+	| TokenErrorCode
+	| RegistrationErrorCode;
 
 /**
  * A failure the client is told about, in the words the spec chose.

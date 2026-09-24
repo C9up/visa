@@ -150,6 +150,25 @@ describe("visa > provider", () => {
 		});
 	});
 
+	it("mounts registration only when it was turned on, and advertises it", async () => {
+		const closed = await started(new MemoryStore());
+		expect(closed.routes.has("POST /oauth/register")).toBe(false);
+
+		const { routes } = await started(new MemoryStore(), {
+			registration: { enabled: true },
+		});
+		expect(routes.has("POST /oauth/register")).toBe(true);
+
+		// RFC 8414: a client discovers the endpoint rather than guessing it.
+		const metadata = routes.get("GET /.well-known/oauth-authorization-server");
+		if (!metadata) throw new Error("no metadata route");
+		const { ctx, recorded } = fakeContext({});
+		await metadata(ctx);
+		expect(recorded.body).toMatchObject({
+			registration_endpoint: `${ISSUER}/oauth/register`,
+		});
+	});
+
 	it("mounts no resource metadata when none was declared", async () => {
 		const { routes } = await started(new MemoryStore());
 		expect(routes.has("GET /.well-known/oauth-protected-resource")).toBe(false);

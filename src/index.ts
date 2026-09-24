@@ -36,6 +36,7 @@ export {
 	type AuthorizationErrorCode,
 	OAuthError,
 	type ProtocolErrorCode,
+	type RegistrationErrorCode,
 	type TokenErrorCode,
 	VisaError,
 } from "./errors.js";
@@ -60,6 +61,13 @@ export {
 	protectedResourceMetadataUrl,
 	wwwAuthenticate,
 } from "./protectedResource.js";
+export {
+	type ClientRegistrationRequest,
+	type ClientRegistrationResponse,
+	type RegistrationOptions,
+	registrationResponse,
+	validateRegistration,
+} from "./register.js";
 export {
 	audienceAllows,
 	narrowResources,

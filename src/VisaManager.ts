@@ -24,6 +24,13 @@ import {
 import { hashSecret, randomToken } from "./crypto.js";
 import { OAuthError, VisaError } from "./errors.js";
 import { introspect, revoke, verifyAccessToken } from "./introspect.js";
+import {
+	type ClientRegistrationRequest,
+	type ClientRegistrationResponse,
+	type RegistrationOptions,
+	registrationResponse,
+	validateRegistration,
+} from "./register.js";
 import type { VisaStore } from "./store.js";
 import { type TokenOptions, token } from "./token.js";
 import type {
@@ -39,6 +46,8 @@ export interface VisaConfig extends AuthorizeOptions, TokenOptions {
 	/** Where this server lives — `https://auth.example.com`. */
 	issuer: string;
 	store: VisaStore;
+	/** Whether clients may register themselves, and on what terms (RFC 7591). */
+	registration?: RegistrationOptions;
 }
 
 /** What `authorize()` decided. */
@@ -116,6 +125,32 @@ export class VisaManager {
 		}
 		store.addClient(client);
 		return secret === undefined ? { client } : { client, secret };
+	}
+
+	/**
+	 * A client registering itself (RFC 7591).
+	 *
+	 * Refused unless the application turned registration on. What comes back is
+	 * the 201 body, secret included — the one time it exists.
+	 */
+	async register(
+		request: ClientRegistrationRequest,
+		presentedToken?: string,
+		now: Date = new Date(),
+	): Promise<ClientRegistrationResponse> {
+		const options = this.#config.registration ?? {};
+		const metadata = validateRegistration(request, options, presentedToken);
+		const { client, secret } = await this.registerClient({
+			// The id is ours to choose: a client naming itself could claim one
+			// that already exists and read another application's tokens.
+			id: randomToken(),
+			name: metadata.name,
+			redirectUris: metadata.redirectUris,
+			grantTypes: metadata.grantTypes,
+			scopes: metadata.scopes,
+			tokenEndpointAuthMethod: metadata.tokenEndpointAuthMethod,
+		});
+		return registrationResponse(client, now, secret, options);
 	}
 
 	/**

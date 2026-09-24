@@ -3,6 +3,7 @@
  * provider reads out of the config store.
  */
 
+import type { RegistrationOptions } from "./register.js";
 import type { VisaStore } from "./store.js";
 
 export interface VisaConfigInput {
@@ -35,6 +36,15 @@ export interface VisaConfigInput {
 	 * client asking for a token aimed at a server you do not run.
 	 */
 	resourcesSupported?: string[];
+	/**
+	 * Let clients register themselves (RFC 7591).
+	 *
+	 * OFF unless you say otherwise. An MCP client such as claude.ai has nobody
+	 * to fill in a form for it, so it needs this; a server on the public
+	 * internet with it open lets anyone create a client, so think about
+	 * `initialAccessToken` before shipping one.
+	 */
+	registration?: RegistrationOptions;
 	/**
 	 * The protected resource this server issues tokens for (RFC 9728).
 	 *

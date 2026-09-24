@@ -137,6 +137,24 @@ export default class VisaProvider {
 			});
 		});
 
+		// RFC 7591 — a client that registers itself. Mounted only when the
+		// application turned it on: an authorization server quietly accepting
+		// registrations is a thing nobody asked for.
+		if (config?.registration?.enabled === true) {
+			router.post(`${prefix}/register`, async (ctx) => {
+				await this.#answer(ctx, async () => {
+					const bearer = readBearer(ctx);
+					const created = await manager.register(ctx.request.all(), bearer);
+					// §3.2.1: 201, and the body carries a secret — no cache may
+					// keep it.
+					ctx.response.status(201);
+					ctx.response.header("cache-control", "no-store");
+					ctx.response.header("pragma", "no-cache");
+					return created;
+				});
+			});
+		}
+
 		// RFC 8414 — what a client fetches to discover the endpoints.
 		router.get("/.well-known/oauth-authorization-server", async (ctx) => {
 			ctx.response.header("content-type", "application/json");
@@ -155,6 +173,9 @@ export default class VisaProvider {
 				// S256 only unless the application turned `plain` back on.
 				code_challenge_methods_supported:
 					config?.allowPlainChallenge === true ? ["S256", "plain"] : ["S256"],
+				...(config?.registration?.enabled === true
+					? { registration_endpoint: `${manager.issuer}${prefix}/register` }
+					: {}),
 				token_endpoint_auth_methods_supported: [
 					"client_secret_basic",
 					"client_secret_post",
@@ -222,6 +243,16 @@ export default class VisaProvider {
 			ctx.response.send(error.toResponse());
 		}
 	}
+}
+
+/** The initial access token a registration may carry (RFC 7591 §3). */
+function readBearer(ctx: VisaHttpContext): string | undefined {
+	const header = ctx.request.header("authorization");
+	if (header === undefined) return undefined;
+	const [scheme, value] = header.split(" ");
+	if (scheme?.toLowerCase() !== "bearer" || value === undefined)
+		return undefined;
+	return value;
 }
 
 function readAuthorization(ctx: VisaHttpContext): { authorization?: string } {
