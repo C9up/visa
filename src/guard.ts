@@ -218,7 +218,16 @@ export class VisaGuard {
 		);
 	}
 
-	/** The header a test client sends to present `token`. */
+	/**
+	 * The header a test client sends to present `token`.
+	 *
+	 * NAMED DEVIATION — upstream takes the USER and mints a token for them.
+	 * Here it takes the token, for the reason warden states for its own
+	 * access-token guard: the credential is issued out of band. In OAuth that
+	 * is not a detail, it is the point — a token exists because a client asked
+	 * and a user consented, and a guard that could mint one for any user would
+	 * be a second issuer with neither of those checks.
+	 */
 	authenticateAsClient(token: string): GuardClientResponse {
 		return { headers: { authorization: `Bearer ${token}` } };
 	}
