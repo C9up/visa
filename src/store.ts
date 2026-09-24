@@ -52,6 +52,35 @@ export interface VisaStore {
 	saveConsent(consent: Consent): Promise<void>;
 
 	/**
+	 * Everything this user has granted, so they can be shown it.
+	 *
+	 * The consent is the unit a person manages: they authorised an
+	 * application, not a token. Tokens come and go under that decision.
+	 */
+	listConsents(userId: string): Promise<Consent[]>;
+
+	/**
+	 * Every access token of this user, EXPIRED ONES INCLUDED.
+	 *
+	 * Included deliberately: "last used" is most interesting precisely when
+	 * nothing is live any more, and a screen that hid them would tell a user an
+	 * application never touched their data when it did.
+	 */
+	listAccessTokens(userId: string): Promise<AccessToken[]>;
+
+	/**
+	 * Cut one application off for one user: every token, both kinds.
+	 *
+	 * Not the consent — {@link deleteConsent} is separate, because forgetting
+	 * the grant and ending the sessions are two different things and a caller
+	 * revoking in a panic wants the second one first.
+	 */
+	revokeAccessFor(userId: string, clientId: string, at: Date): Promise<void>;
+
+	/** Forget the grant, so the user is asked again next time. */
+	deleteConsent(userId: string, clientId: string): Promise<void>;
+
+	/**
 	 * Record that an access token was just used.
 	 *
 	 * Optional, and deliberately best-effort: it is one write per authenticated

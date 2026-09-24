@@ -70,6 +70,39 @@ export class MemoryStore implements VisaStore {
 		if (token !== undefined) token.revokedAt = at;
 	}
 
+	async listConsents(userId: string): Promise<Consent[]> {
+		return [...this.#consents.values()].filter(
+			(consent) => consent.userId === userId,
+		);
+	}
+
+	async listAccessTokens(userId: string): Promise<AccessToken[]> {
+		return [...this.#accessTokens.values()].filter(
+			(token) => token.userId === userId,
+		);
+	}
+
+	async revokeAccessFor(
+		userId: string,
+		clientId: string,
+		at: Date,
+	): Promise<void> {
+		for (const token of this.#accessTokens.values()) {
+			if (token.userId !== userId || token.clientId !== clientId) continue;
+			if (token.revokedAt === undefined) token.revokedAt = at;
+		}
+		for (const token of this.#refreshTokens.values()) {
+			if (token.userId !== userId || token.clientId !== clientId) continue;
+			if (token.revokedAt === undefined) token.revokedAt = at;
+		}
+	}
+
+	async deleteConsent(userId: string, clientId: string): Promise<void> {
+		// The same NUL-separated key `saveConsent` writes: a colon would make
+		// `a:b` + `c` collide with `a` + `b:c`.
+		this.#consents.delete(`${userId}\u0000${clientId}`);
+	}
+
 	async touchAccessToken(tokenHash: string, at: Date): Promise<void> {
 		const token = this.#accessTokens.get(tokenHash);
 		if (token !== undefined) token.lastUsedAt = at;

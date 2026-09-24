@@ -112,6 +112,29 @@ export interface Consent {
 	grantedAt: Date;
 }
 
+/**
+ * One application a user has authorised, as a "connected applications" screen
+ * shows it.
+ *
+ * The unit is the APPLICATION, not the token: a person authorised an
+ * application, and the tokens come and go under that one decision. Upstream's
+ * equivalent listing is per token because it has no clients; here a user with
+ * four live tokens for one application has authorised one thing, and seeing
+ * four rows would be a lie about what revoking does.
+ */
+export interface AuthorizedApplication {
+	clientId: string;
+	/** The client's registered name, or its id when the client is gone. */
+	name: string;
+	/** What was granted — the consent, not what any one token happens to carry. */
+	scopes: string[];
+	grantedAt: Date;
+	/** The most recent use across this application's tokens, if any was used. */
+	lastUsedAt?: Date;
+	/** Whether anything issued to it is still usable right now. */
+	active: boolean;
+}
+
 /** The token endpoint's success body (§4.1.4). */
 export interface TokenResponse {
 	access_token: string;

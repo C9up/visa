@@ -21,6 +21,7 @@
 
 import { hashSecret, randomToken } from "./crypto.js";
 import { verifyAccessToken } from "./introspect.js";
+import { wwwAuthenticate } from "./protectedResource.js";
 import type { VisaStore } from "./store.js";
 
 /**
@@ -214,6 +215,14 @@ export interface VisaGuardConfig {
 	tokenClientId?: string;
 	/** How long a minted token lasts — upstream's `expiresIn`, in seconds. */
 	expiresInSeconds?: number;
+	/**
+	 * The protected resource this guard stands in front of (RFC 9728).
+	 *
+	 * Given, {@link VisaGuard.challenge} returns a `WWW-Authenticate` naming
+	 * the metadata document, which is how an MCP client finds the
+	 * authorization server without being told where it is.
+	 */
+	resource?: string;
 }
 
 /**
@@ -329,6 +338,27 @@ export class VisaGuard {
 	): Promise<GuardClientResponse> {
 		const token = await this.createToken(user, abilities, options);
 		return { headers: { authorization: `Bearer ${token.value}` } };
+	}
+
+	/**
+	 * The `WWW-Authenticate` value a 401 from this guard should carry.
+	 *
+	 * Returned rather than set: a warden strategy answers whether a credential
+	 * is good, and the response belongs to whoever refuses the request. An
+	 * exception handler sets it — `response.header('www-authenticate',
+	 * guard.challenge())` — and with it a client that has no token learns
+	 * where to get one instead of hitting a dead end.
+	 */
+	challenge(
+		options: { error?: string; scope?: readonly string[] } = {},
+	): string {
+		return wwwAuthenticate({
+			...(this.#config.resource === undefined
+				? {}
+				: { resource: this.#config.resource }),
+			...(options.error === undefined ? {} : { error: options.error }),
+			...(options.scope === undefined ? {} : { scope: options.scope }),
+		});
 	}
 
 	async verify(presented: string): Promise<GuardResult> {

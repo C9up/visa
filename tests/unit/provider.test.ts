@@ -46,7 +46,10 @@ function fakeContext(body: Record<string, unknown>, authorization?: string) {
 	return { ctx, recorded };
 }
 
-function buildApp(store: MemoryStore): {
+function buildApp(
+	store: MemoryStore,
+	extra: Record<string, unknown> = {},
+): {
 	app: VisaAppContext;
 	routes: Map<string, (ctx: unknown) => Promise<void>>;
 } {
@@ -81,15 +84,20 @@ function buildApp(store: MemoryStore): {
 			},
 			config: {
 				get<T>(key: string): T | undefined {
-					return key === "visa" ? ({ issuer: ISSUER, store } as T) : undefined;
+					return key === "visa"
+						? ({ issuer: ISSUER, store, ...extra } as T)
+						: undefined;
 				},
 			},
 		},
 	};
 }
 
-async function started(store: MemoryStore) {
-	const { app, routes } = buildApp(store);
+async function started(
+	store: MemoryStore,
+	extra: Record<string, unknown> = {},
+) {
+	const { app, routes } = buildApp(store, extra);
 	const provider = new VisaProvider(app);
 	provider.register();
 	await provider.boot();
@@ -109,6 +117,42 @@ describe("visa > provider", () => {
 			"POST /oauth/revoke",
 			"POST /oauth/token",
 		]);
+	});
+
+	it("serves the protected resource metadata once one is declared", async () => {
+		// RFC 9728. Without the declaration nothing is mounted: a document
+		// announcing a resource nobody declared points clients at thin air.
+		const { routes } = await started(new MemoryStore(), {
+			protectedResource: {
+				resource: "https://api.example/mcp",
+				scopesSupported: ["profile"],
+			},
+		});
+
+		// §3 puts the well-known segment between the host and the path, and a
+		// client may ask for either form.
+		expect(routes.has("GET /.well-known/oauth-protected-resource")).toBe(true);
+		expect(routes.has("GET /.well-known/oauth-protected-resource/mcp")).toBe(
+			true,
+		);
+
+		const handler = routes.get("GET /.well-known/oauth-protected-resource/mcp");
+		if (!handler) throw new Error("no metadata route");
+		const { ctx, recorded } = fakeContext({});
+		await handler(ctx);
+
+		expect(recorded.body).toEqual({
+			resource: "https://api.example/mcp",
+			// The issuer this server answers on — what the client goes to next.
+			authorization_servers: [ISSUER],
+			scopes_supported: ["profile"],
+			bearer_methods_supported: ["header"],
+		});
+	});
+
+	it("mounts no resource metadata when none was declared", async () => {
+		const { routes } = await started(new MemoryStore());
+		expect(routes.has("GET /.well-known/oauth-protected-resource")).toBe(false);
 	});
 
 	it("answers a bad client with 401 and says how to authenticate", async () => {

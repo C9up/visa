@@ -27,6 +27,23 @@ export interface VisaConfigInput {
 	allowPlainChallenge?: boolean;
 	/** Where the endpoints are mounted. Default `/oauth`. */
 	prefix?: string;
+	/**
+	 * The protected resource this server issues tokens for (RFC 9728).
+	 *
+	 * Declare it and two things follow: the metadata document is served at
+	 * `/.well-known/oauth-protected-resource`, and a refusal can name it. An
+	 * MCP client walks from the 401 to that document to this server without
+	 * anybody pasting a URL into a config file, which is the whole reason the
+	 * RFC exists.
+	 */
+	protectedResource?: {
+		/** The resource identifier — an absolute URI, no fragment. */
+		resource: string;
+		/** What a client may ask for. RECOMMENDED by §3.2. */
+		scopesSupported?: string[];
+		resourceName?: string;
+		resourceDocumentation?: string;
+	};
 }
 
 export function defineConfig(config: VisaConfigInput): VisaConfigInput {

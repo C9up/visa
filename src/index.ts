@@ -51,6 +51,16 @@ export {
 } from "./guard.js";
 export { introspect, revoke, verifyAccessToken } from "./introspect.js";
 export {
+	assertResourceIdentifier,
+	type ChallengeOptions,
+	PROTECTED_RESOURCE_PATH,
+	type ProtectedResourceMetadata,
+	type ProtectedResourceOptions,
+	protectedResourceMetadata,
+	protectedResourceMetadataUrl,
+	wwwAuthenticate,
+} from "./protectedResource.js";
+export {
 	clearVisa,
 	default as visa,
 	getVisa,
@@ -68,6 +78,7 @@ export { type TokenOptions, type TokenRequest, token } from "./token.js";
 export type {
 	AccessToken,
 	AuthorizationCode,
+	AuthorizedApplication,
 	Client,
 	ClientAuthMethod,
 	Consent,

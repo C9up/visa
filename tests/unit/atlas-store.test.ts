@@ -101,6 +101,11 @@ class FakeQuery implements AtlasQuery {
 		return this.#matching()[0] ?? null;
 	}
 
+	async exec(): Promise<Row[]> {
+		this.#db.statements.push(`select ${this.#table}`);
+		return this.#matching();
+	}
+
 	async insert(data: Row): Promise<void> {
 		this.#db.statements.push(`insert ${this.#table}`);
 		this.#db.rows(this.#table).push({ ...data });
@@ -411,6 +416,72 @@ describe("visa > the atlas store", () => {
 
 		expect(db.rows("oauth_tokens")).toHaveLength(1);
 		expect(db.rows("visa_access_tokens")).toHaveLength(0);
+	});
+
+	it("lists what a user granted, and cuts one application off", async () => {
+		const now = new Date();
+		await store.saveConsent({
+			userId: "user-7",
+			clientId: "billing",
+			scopes: ["profile"],
+			grantedAt: now,
+		});
+		await store.saveConsent({
+			userId: "user-8",
+			clientId: "billing",
+			scopes: ["profile"],
+			grantedAt: now,
+		});
+		await store.saveAccessToken({
+			tokenHash: "mine",
+			clientId: "billing",
+			userId: "user-7",
+			scopes: ["profile"],
+			expiresAt: new Date(Date.now() + HOUR),
+		});
+		await store.saveRefreshToken({
+			tokenHash: "mine-refresh",
+			familyId: "fam-1",
+			clientId: "billing",
+			userId: "user-7",
+			scopes: ["profile"],
+			expiresAt: new Date(Date.now() + 30 * HOUR),
+		});
+		await store.saveAccessToken({
+			tokenHash: "theirs",
+			clientId: "billing",
+			userId: "user-8",
+			scopes: ["profile"],
+			expiresAt: new Date(Date.now() + HOUR),
+		});
+
+		expect(await store.listConsents("user-7")).toHaveLength(1);
+		expect(await store.listAccessTokens("user-7")).toHaveLength(1);
+
+		await store.revokeAccessFor("user-7", "billing", now);
+		await store.deleteConsent("user-7", "billing");
+
+		expect((await store.findAccessToken("mine"))?.revokedAt).toEqual(now);
+		expect((await store.findRefreshToken("mine-refresh"))?.revokedAt).toEqual(
+			now,
+		);
+		expect(await store.findConsent("user-7", "billing")).toBeNull();
+		// Nobody else's.
+		expect((await store.findAccessToken("theirs"))?.revokedAt).toBeUndefined();
+		expect(await store.findConsent("user-8", "billing")).not.toBeNull();
+	});
+
+	it("lists a token that has expired", async () => {
+		// The contract says so: last-used matters most when nothing is live.
+		await store.saveAccessToken({
+			tokenHash: "stale",
+			clientId: "billing",
+			userId: "user-7",
+			scopes: [],
+			expiresAt: new Date(Date.now() - HOUR),
+		});
+
+		expect(await store.listAccessTokens("user-7")).toHaveLength(1);
 	});
 
 	it("refuses a scope column that is not a list", async () => {

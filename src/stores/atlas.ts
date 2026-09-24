@@ -45,6 +45,8 @@ export interface AtlasQuery {
 	whereNull(column: string): AtlasQuery;
 	orderBy(column: string, direction?: "asc" | "desc"): AtlasQuery;
 	first(): Promise<Row | null>;
+	/** Run the select and return every row — atlas' `exec()`. */
+	exec(): Promise<Row[]>;
 	insert(data: Row): PromiseLike<unknown>;
 	/** Resolves to the number of rows affected, which is what the atomic paths read. */
 	update(data: Row): PromiseLike<number | Row[]>;
@@ -270,21 +272,7 @@ export class AtlasStore implements VisaStore {
 			.from(this.#tables.accessTokens)
 			.where({ token_hash: tokenHash })
 			.first();
-		if (row === null) return null;
-		const userId = optionalString(row.user_id);
-		const revokedAt = decodeDate(row.revoked_at);
-		const lastUsedAt = decodeDate(row.last_used_at);
-		const familyId = optionalString(row.family_id);
-		return {
-			tokenHash: requireString(row.token_hash, "token_hash"),
-			clientId: requireString(row.client_id, "client_id"),
-			...(userId === undefined ? {} : { userId }),
-			scopes: decodeList(row.scopes, "scopes"),
-			expiresAt: requireDate(row.expires_at, "expires_at"),
-			...(revokedAt === undefined ? {} : { revokedAt }),
-			...(lastUsedAt === undefined ? {} : { lastUsedAt }),
-			...(familyId === undefined ? {} : { familyId }),
-		};
+		return row === null ? null : readAccessToken(row);
 	}
 
 	async revokeAccessToken(tokenHash: string, at: Date): Promise<void> {
@@ -400,6 +388,54 @@ export class AtlasStore implements VisaStore {
 		});
 	}
 
+	async listConsents(userId: string): Promise<Consent[]> {
+		const rows = await this.#db
+			.from(this.#tables.consents)
+			.where({ user_id: userId })
+			.orderBy("granted_at", "desc")
+			.exec();
+		return rows.map((row) => ({
+			userId: requireString(row.user_id, "user_id"),
+			clientId: requireString(row.client_id, "client_id"),
+			scopes: decodeList(row.scopes, "scopes"),
+			grantedAt: requireDate(row.granted_at, "granted_at"),
+		}));
+	}
+
+	/** Expired ones included — see the contract for why. */
+	async listAccessTokens(userId: string): Promise<AccessToken[]> {
+		const rows = await this.#db
+			.from(this.#tables.accessTokens)
+			.where({ user_id: userId })
+			.orderBy("expires_at", "desc")
+			.exec();
+		return rows.map(readAccessToken);
+	}
+
+	async revokeAccessFor(
+		userId: string,
+		clientId: string,
+		at: Date,
+	): Promise<void> {
+		for (const table of [
+			this.#tables.accessTokens,
+			this.#tables.refreshTokens,
+		]) {
+			await this.#db
+				.from(table)
+				.where({ user_id: userId, client_id: clientId })
+				.whereNull("revoked_at")
+				.update({ revoked_at: at });
+		}
+	}
+
+	async deleteConsent(userId: string, clientId: string): Promise<void> {
+		await this.#db
+			.from(this.#tables.consents)
+			.where({ user_id: userId, client_id: clientId })
+			.delete();
+	}
+
 	/** Drop what has expired and can no longer be presented. */
 	async prune(now: Date): Promise<void> {
 		for (const table of [
@@ -410,6 +446,24 @@ export class AtlasStore implements VisaStore {
 			await this.#db.from(table).where("expires_at", "<", now).delete();
 		}
 	}
+}
+
+/** One access-token row, as the contract's shape. */
+function readAccessToken(row: Row): AccessToken {
+	const userId = optionalString(row.user_id);
+	const revokedAt = decodeDate(row.revoked_at);
+	const lastUsedAt = decodeDate(row.last_used_at);
+	const familyId = optionalString(row.family_id);
+	return {
+		tokenHash: requireString(row.token_hash, "token_hash"),
+		clientId: requireString(row.client_id, "client_id"),
+		...(userId === undefined ? {} : { userId }),
+		scopes: decodeList(row.scopes, "scopes"),
+		expiresAt: requireDate(row.expires_at, "expires_at"),
+		...(revokedAt === undefined ? {} : { revokedAt }),
+		...(lastUsedAt === undefined ? {} : { lastUsedAt }),
+		...(familyId === undefined ? {} : { familyId }),
+	};
 }
 
 function isGrantType(value: string): value is GrantType {

@@ -224,6 +224,11 @@ describe("visa > MemoryStore", () => {
 			revokeFamily: (family, at) => base.revokeFamily(family, at),
 			findConsent: (user, client) => base.findConsent(user, client),
 			saveConsent: (consent) => base.saveConsent(consent),
+			listConsents: (user) => base.listConsents(user),
+			listAccessTokens: (user) => base.listAccessTokens(user),
+			revokeAccessFor: (user, client, at) =>
+				base.revokeAccessFor(user, client, at),
+			deleteConsent: (user, client) => base.deleteConsent(user, client),
 		};
 		const manager = new VisaManager({ issuer: ISSUER, store: readOnly });
 		await expect(

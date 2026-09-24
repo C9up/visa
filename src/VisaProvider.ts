@@ -19,6 +19,11 @@
 import "./augmentations.js";
 import type { VisaConfigInput } from "./config.js";
 import { OAuthError } from "./errors.js";
+import {
+	PROTECTED_RESOURCE_PATH,
+	protectedResourceMetadata,
+	protectedResourceMetadataUrl,
+} from "./protectedResource.js";
 import { clearVisa, getVisa, setVisa } from "./services/main.js";
 import { VisaManager } from "./VisaManager.js";
 
@@ -157,6 +162,34 @@ export default class VisaProvider {
 				],
 			});
 		});
+
+		// RFC 9728 — what a client fetches after a 401 to learn where tokens
+		// come from. Mounted only when the application named its resource: a
+		// document announcing a resource nobody declared would point clients at
+		// something that does not exist.
+		const protectedResource = config?.protectedResource;
+		if (protectedResource !== undefined) {
+			const document = protectedResourceMetadata({
+				...protectedResource,
+				authorizationServers: [manager.issuer],
+			});
+			router.get(PROTECTED_RESOURCE_PATH, async (ctx) => {
+				ctx.response.header("content-type", "application/json");
+				ctx.response.send(document);
+			});
+			// §3: the well-known segment goes BETWEEN the host and the resource's
+			// path, so a resource at `/mcp` publishes at `…/oauth-protected-
+			// resource/mcp`. Both are served: a client may ask for either.
+			const withPath = new URL(
+				protectedResourceMetadataUrl(protectedResource.resource),
+			).pathname;
+			if (withPath !== PROTECTED_RESOURCE_PATH) {
+				router.get(withPath, async (ctx) => {
+					ctx.response.header("content-type", "application/json");
+					ctx.response.send(document);
+				});
+			}
+		}
 	}
 
 	async shutdown(): Promise<void> {

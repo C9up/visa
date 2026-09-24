@@ -27,6 +27,7 @@ import { introspect, revoke, verifyAccessToken } from "./introspect.js";
 import type { VisaStore } from "./store.js";
 import { type TokenOptions, token } from "./token.js";
 import type {
+	AuthorizedApplication,
 	Client,
 	ClientAuthMethod,
 	GrantType,
@@ -235,6 +236,70 @@ export class VisaManager {
 		now: Date = new Date(),
 	): Promise<{ clientId: string; userId?: string; scopes: string[] } | null> {
 		return verifyAccessToken(presented, this.#config.store, now);
+	}
+
+	/**
+	 * Every application this user has authorised.
+	 *
+	 * What a "connected applications" screen renders. Includes an application
+	 * whose tokens have all expired: "last used" matters most when nothing is
+	 * live any more, and hiding it would tell someone an application never
+	 * touched their data when it did.
+	 */
+	async listAuthorizations(
+		userId: string,
+		now: Date = new Date(),
+	): Promise<AuthorizedApplication[]> {
+		const store = this.#config.store;
+		const consents = await store.listConsents(userId);
+		const tokens = await store.listAccessTokens(userId);
+
+		return Promise.all(
+			consents.map(async (consent) => {
+				const mine = tokens.filter(
+					(token) => token.clientId === consent.clientId,
+				);
+				const client = await store.findClient(consent.clientId);
+				const lastUsedAt = mine.reduce<Date | undefined>((latest, token) => {
+					if (token.lastUsedAt === undefined) return latest;
+					if (latest === undefined) return token.lastUsedAt;
+					return token.lastUsedAt > latest ? token.lastUsedAt : latest;
+				}, undefined);
+
+				return {
+					clientId: consent.clientId,
+					// A client that has since been deleted still shows, under its id:
+					// the grant is the user's and they must be able to end it.
+					name: client?.name ?? consent.clientId,
+					scopes: consent.scopes,
+					grantedAt: consent.grantedAt,
+					...(lastUsedAt === undefined ? {} : { lastUsedAt }),
+					active: mine.some(
+						(token) => token.revokedAt === undefined && token.expiresAt > now,
+					),
+				};
+			}),
+		);
+	}
+
+	/**
+	 * End one application's access for one user.
+	 *
+	 * Tokens first, consent second, and deliberately in that order: someone
+	 * revoking in a hurry wants the sessions dead, and a failure half-way
+	 * through must not leave an application still holding live tokens with the
+	 * grant already forgotten.
+	 *
+	 * Both kinds of token go — revoking only the refresh half would leave the
+	 * access token it already bought alive for its full lifetime.
+	 */
+	async revokeAuthorization(
+		userId: string,
+		clientId: string,
+		now: Date = new Date(),
+	): Promise<void> {
+		await this.#config.store.revokeAccessFor(userId, clientId, now);
+		await this.#config.store.deleteConsent(userId, clientId);
 	}
 
 	/** Read credentials out of a request, both places the spec allows. */
