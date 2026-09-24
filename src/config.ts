@@ -28,6 +28,14 @@ export interface VisaConfigInput {
 	/** Where the endpoints are mounted. Default `/oauth`. */
 	prefix?: string;
 	/**
+	 * The resources this server issues tokens for (RFC 8707).
+	 *
+	 * Left out, any well-formed `resource` is accepted and carried. Named, an
+	 * unknown one is refused with `invalid_target` — which is what stops a
+	 * client asking for a token aimed at a server you do not run.
+	 */
+	resourcesSupported?: string[];
+	/**
 	 * The protected resource this server issues tokens for (RFC 9728).
 	 *
 	 * Declare it and two things follow: the metadata document is served at

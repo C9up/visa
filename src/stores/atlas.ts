@@ -207,6 +207,7 @@ export class AtlasStore implements VisaStore {
 			expires_at: code.expiresAt,
 			consumed_at: code.consumedAt ?? null,
 			nonce: code.nonce ?? null,
+			resources: encodeList(code.resources ?? []),
 			created_at: new Date(),
 		});
 	}
@@ -233,6 +234,7 @@ export class AtlasStore implements VisaStore {
 			expiresAt: requireDate(row.expires_at, "expires_at"),
 			...(consumedAt === undefined ? {} : { consumedAt }),
 			...(nonce === undefined ? {} : { nonce }),
+			...listOrNothing("resources", row.resources),
 		};
 	}
 
@@ -263,6 +265,7 @@ export class AtlasStore implements VisaStore {
 			revoked_at: token.revokedAt ?? null,
 			last_used_at: token.lastUsedAt ?? null,
 			family_id: token.familyId ?? null,
+			audience: encodeList(token.audience ?? []),
 			created_at: new Date(),
 		});
 	}
@@ -300,6 +303,7 @@ export class AtlasStore implements VisaStore {
 			expires_at: token.expiresAt,
 			consumed_at: token.consumedAt ?? null,
 			revoked_at: token.revokedAt ?? null,
+			resources: encodeList(token.resources ?? []),
 			created_at: new Date(),
 		});
 	}
@@ -322,6 +326,7 @@ export class AtlasStore implements VisaStore {
 			expiresAt: requireDate(row.expires_at, "expires_at"),
 			...(consumedAt === undefined ? {} : { consumedAt }),
 			...(revokedAt === undefined ? {} : { revokedAt }),
+			...listOrNothing("resources", row.resources),
 		};
 	}
 
@@ -463,7 +468,32 @@ function readAccessToken(row: Row): AccessToken {
 		...(revokedAt === undefined ? {} : { revokedAt }),
 		...(lastUsedAt === undefined ? {} : { lastUsedAt }),
 		...(familyId === undefined ? {} : { familyId }),
+		...listOrNothing("audience", row.audience),
 	};
+}
+
+/**
+ * A list column, present in the object only when it holds something.
+ *
+ * Empty and absent mean the same thing for an audience — unbound — and the
+ * contract spells that as absent, so an empty column must not become `[]` or
+ * a round trip would stop matching what went in.
+ */
+function listOrNothing(
+	key: "audience",
+	value: unknown,
+): { audience?: string[] };
+function listOrNothing(
+	key: "resources",
+	value: unknown,
+): { resources?: string[] };
+function listOrNothing(
+	key: "audience" | "resources",
+	value: unknown,
+): { audience?: string[]; resources?: string[] } {
+	const list = decodeList(value, key);
+	if (list.length === 0) return {};
+	return key === "audience" ? { audience: list } : { resources: list };
 }
 
 function isGrantType(value: string): value is GrantType {

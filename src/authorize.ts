@@ -15,6 +15,7 @@ import {
 } from "./clients.js";
 import { hashSecret, randomToken } from "./crypto.js";
 import { OAuthError } from "./errors.js";
+import { readResourceParameter, validateResources } from "./resource.js";
 import type { VisaStore } from "./store.js";
 import type { AuthorizationCode, Client } from "./types.js";
 
@@ -30,6 +31,13 @@ export interface AuthorizationRequest {
 	nonce?: string;
 	/** A client may ask to always see the consent screen. */
 	prompt?: string;
+	/**
+	 * Which resource the token is for (RFC 8707). One, or several.
+	 *
+	 * A parser hands repeated parameters over as an array, so both shapes are
+	 * accepted rather than one being silently the only one that works.
+	 */
+	resource?: string | string[];
 }
 
 /** A request that passed every check, with the values it resolved to. */
@@ -41,6 +49,8 @@ export interface ValidatedRequest {
 	codeChallenge: string;
 	codeChallengeMethod: "S256" | "plain";
 	nonce: string | undefined;
+	/** The resources the token will be bound to (RFC 8707). Empty means unbound. */
+	resources: string[];
 }
 
 /**
@@ -61,6 +71,15 @@ export class UnredirectableError extends Error {
 export interface AuthorizeOptions {
 	/** Lifetime of the code. Short on purpose — see `issueAuthorizationCode`. */
 	codeTtlSeconds?: number;
+	/**
+	 * The resources this server will issue tokens for (RFC 8707).
+	 *
+	 * Left out, any well-formed resource is accepted and carried — which is
+	 * useful while a deployment finds its names, and worth replacing with the
+	 * list once it has: an unknown resource should be refused with
+	 * `invalid_target` rather than minted for.
+	 */
+	resourcesSupported?: readonly string[];
 	/**
 	 * Accept `plain` as a code challenge method.
 	 *
@@ -119,6 +138,10 @@ export async function validateAuthorizationRequest(
 		options,
 	);
 	const scopes = resolveScopes(request.scope, client);
+	const resources = validateResources(
+		readResourceParameter(request.resource),
+		options.resourcesSupported,
+	);
 
 	return {
 		client,
@@ -128,6 +151,7 @@ export async function validateAuthorizationRequest(
 		codeChallenge,
 		codeChallengeMethod,
 		nonce: request.nonce,
+		resources,
 	};
 }
 
@@ -215,6 +239,9 @@ export async function issueAuthorizationCode(
 		codeChallengeMethod: validated.codeChallengeMethod,
 		expiresAt: new Date(now.getTime() + ttl * 1000),
 		...(validated.nonce === undefined ? {} : { nonce: validated.nonce }),
+		...(validated.resources.length === 0
+			? {}
+			: { resources: validated.resources }),
 	};
 	await store.saveAuthorizationCode(record);
 	return code;

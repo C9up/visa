@@ -10,6 +10,7 @@
 import { authenticateClient, type ClientCredentials } from "./clients.js";
 import { hashSecret } from "./crypto.js";
 import { OAuthError } from "./errors.js";
+import { audienceAllows } from "./resource.js";
 import type { VisaStore } from "./store.js";
 import type { IntrospectionResponse } from "./types.js";
 
@@ -55,6 +56,9 @@ export async function introspect(
 			token_type: "Bearer",
 			exp: Math.floor(access.expiresAt.getTime() / 1000),
 			...(access.userId === undefined ? {} : { sub: access.userId }),
+			// RFC 8707 §3 names introspection as where a resource server learns
+			// what a token was minted for.
+			...(access.audience === undefined ? {} : { aud: access.audience }),
 		};
 	}
 
@@ -125,16 +129,28 @@ export async function verifyAccessToken(
 	// not have to implement eleven methods it never calls.
 	store: Pick<VisaStore, "findAccessToken">,
 	now: Date = new Date(),
+	/**
+	 * This resource's identifier (RFC 8707).
+	 *
+	 * Given, a token minted for a different resource is refused here rather
+	 * than honoured — which is the entire point of binding one.
+	 */
+	resource?: string,
 ): Promise<{
 	clientId: string;
 	userId?: string;
 	scopes: string[];
 	expiresAt: Date;
 	lastUsedAt?: Date;
+	audience?: string[];
 } | null> {
 	const token = await store.findAccessToken(hashSecret(presented));
 	if (token === null) return null;
 	if (token.revokedAt !== undefined || token.expiresAt <= now) return null;
+	// RFC 8707: a token bound to a resource is refused anywhere else. Unbound
+	// tokens are accepted — that is every token issued before a client started
+	// asking, and refusing them would break each one.
+	if (!audienceAllows(token.audience, resource)) return null;
 	return {
 		clientId: token.clientId,
 		...(token.userId === undefined ? {} : { userId: token.userId }),
@@ -145,6 +161,7 @@ export async function verifyAccessToken(
 		// The PREVIOUS use, before this one is recorded — which is what the
 		// upstream guard shows on `currentAccessToken.lastUsedAt`.
 		...(token.lastUsedAt === undefined ? {} : { lastUsedAt: token.lastUsedAt }),
+		...(token.audience === undefined ? {} : { audience: token.audience }),
 	};
 }
 

@@ -230,12 +230,18 @@ export class VisaManager {
 		return revoke(body, credentials, this.#config.store, now);
 	}
 
-	/** What a resource server calls on every request. */
+	/**
+	 * What a resource server calls on every request.
+	 *
+	 * `resource` is this server's own identifier (RFC 8707): given, a token
+	 * minted for a different one is refused here rather than honoured.
+	 */
 	async verify(
 		presented: string,
 		now: Date = new Date(),
-	): Promise<{ clientId: string; userId?: string; scopes: string[] } | null> {
-		return verifyAccessToken(presented, this.#config.store, now);
+		resource?: string,
+	): ReturnType<typeof verifyAccessToken> {
+		return verifyAccessToken(presented, this.#config.store, now, resource);
 	}
 
 	/**

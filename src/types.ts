@@ -57,6 +57,13 @@ export interface AuthorizationCode {
 	expiresAt: Date;
 	/** Set the moment it is exchanged, so a replay is detectable (§7.5.1). */
 	consumedAt?: Date;
+	/**
+	 * The resources this code may buy a token for (RFC 8707).
+	 *
+	 * Bound here rather than at the token endpoint: the user saw the request
+	 * that named them, and the exchange may narrow the list but never widen it.
+	 */
+	resources?: string[];
 	/** Carried through to the id_token when OIDC lands. */
 	nonce?: string;
 }
@@ -76,6 +83,15 @@ export interface AccessToken {
 	 * and what tells a dormant token from a live one.
 	 */
 	lastUsedAt?: Date;
+	/**
+	 * Which resources this token is for (RFC 8707).
+	 *
+	 * Absent means unbound — a token for everything, which is what every token
+	 * was before a client started asking. A resource server checks it against
+	 * its own identifier, so a token that travelled to the wrong one is refused
+	 * there instead of being honoured.
+	 */
+	audience?: string[];
 	/**
 	 * The refresh family this token was minted in, when there is one.
 	 *
@@ -102,6 +118,8 @@ export interface RefreshToken {
 	expiresAt: Date;
 	consumedAt?: Date;
 	revokedAt?: Date;
+	/** The resources a token minted from this one may be for (RFC 8707). */
+	resources?: string[];
 }
 
 /** What a user agreed to give a client, so they are asked once. */
@@ -161,4 +179,6 @@ export interface IntrospectionResponse {
 	exp?: number;
 	iat?: number;
 	token_type?: "Bearer";
+	/** Which resources the token is for — RFC 8707 §3 names introspection as where this travels. */
+	aud?: string[];
 }

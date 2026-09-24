@@ -19,6 +19,8 @@ export type AuthorizationErrorCode =
 	| "access_denied"
 	| "unsupported_response_type"
 	| "invalid_scope"
+	/** RFC 8707 §2 — a resource this server will not issue for, or cannot parse. */
+	| "invalid_target"
 	| "server_error"
 	| "temporarily_unavailable";
 
@@ -29,7 +31,9 @@ export type TokenErrorCode =
 	| "invalid_grant"
 	| "unauthorized_client"
 	| "unsupported_grant_type"
-	| "invalid_scope";
+	| "invalid_scope"
+	/** RFC 8707 §2. */
+	| "invalid_target";
 
 export type ProtocolErrorCode = AuthorizationErrorCode | TokenErrorCode;
 

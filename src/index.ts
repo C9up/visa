@@ -61,6 +61,12 @@ export {
 	wwwAuthenticate,
 } from "./protectedResource.js";
 export {
+	audienceAllows,
+	narrowResources,
+	readResourceParameter,
+	validateResources,
+} from "./resource.js";
+export {
 	clearVisa,
 	default as visa,
 	getVisa,

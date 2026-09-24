@@ -14,11 +14,18 @@ import {
 } from "./clients.js";
 import { hashMatches, hashSecret, randomToken, sha256 } from "./crypto.js";
 import { OAuthError } from "./errors.js";
+import {
+	narrowResources,
+	readResourceParameter,
+	validateResources,
+} from "./resource.js";
 import type { VisaStore } from "./store.js";
 import type { Client, GrantType, TokenResponse } from "./types.js";
 
 export interface TokenOptions {
 	accessTokenTtlSeconds?: number;
+	/** The resources this server issues tokens for — see `AuthorizeOptions`. */
+	resourcesSupported?: readonly string[];
 	refreshTokenTtlSeconds?: number;
 	/** Hand out refresh tokens at all. */
 	issueRefreshTokens?: boolean;
@@ -135,12 +142,23 @@ async function exchangeCode(
 		throw invalid;
 	}
 
+	// RFC 8707: a request may narrow the resources the code was bound to,
+	// never widen them — the user saw the list at authorization time.
+	const resources = narrowResources(
+		validateResources(
+			readResourceParameter(request.resource),
+			options.resourcesSupported,
+		),
+		record.resources ?? [],
+	);
+
 	return issue(
 		{
 			client,
 			userId: record.userId,
 			scopes: record.scopes,
 			familyId: codeFamily(record.codeHash),
+			resources,
 		},
 		store,
 		options,
@@ -215,6 +233,13 @@ async function exchangeRefresh(
 			...(record.userId === undefined ? {} : { userId: record.userId }),
 			scopes,
 			familyId: record.familyId,
+			resources: narrowResources(
+				validateResources(
+					readResourceParameter(request.resource),
+					options.resourcesSupported,
+				),
+				record.resources ?? [],
+			),
 		},
 		store,
 		options,
@@ -258,7 +283,16 @@ async function clientCredentials(
 	}
 	const scopes = resolveScopes(asString(request.scope), client);
 	return issue(
-		{ client, scopes },
+		{
+			client,
+			scopes,
+			// No user consented to a list here, so the request IS the list —
+			// checked against what this server issues for, and nothing wider.
+			resources: validateResources(
+				readResourceParameter(request.resource),
+				options.resourcesSupported,
+			),
+		},
 		store,
 		{ ...options, issueRefreshTokens: false },
 		now,
@@ -270,6 +304,8 @@ interface Issued {
 	userId?: string;
 	scopes: string[];
 	familyId?: string;
+	/** RFC 8707 — what the token is for. Empty means unbound. */
+	resources?: string[];
 }
 
 /** Mint the pair and store both, hashed. */
@@ -290,6 +326,9 @@ async function issue(
 		scopes: grant.scopes,
 		expiresAt: new Date(now.getTime() + accessTtl * 1000),
 		...(grant.familyId === undefined ? {} : { familyId: grant.familyId }),
+		...(grant.resources === undefined || grant.resources.length === 0
+			? {}
+			: { audience: grant.resources }),
 	});
 
 	const response: TokenResponse = {
@@ -315,6 +354,11 @@ async function issue(
 		...(grant.userId === undefined ? {} : { userId: grant.userId }),
 		scopes: grant.scopes,
 		expiresAt: new Date(now.getTime() + refreshTtl * 1000),
+		// Carried so a rotation can narrow from the same list the code bound —
+		// without it, the second token of a session would be unbound.
+		...(grant.resources === undefined || grant.resources.length === 0
+			? {}
+			: { resources: grant.resources }),
 	});
 	response.refresh_token = refreshToken;
 	return response;

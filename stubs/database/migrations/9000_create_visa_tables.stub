@@ -47,6 +47,10 @@ export default class CreateVisaTables extends Migration {
 			// UPDATE guarded on this column being null.
 			t.timestamp("consumed_at").nullable();
 			t.string("nonce", 255).nullable();
+			// RFC 8707 — which resources a token bought with this code may be
+			// for. Empty means unbound, which is every code a client sent no
+			// `resource` with.
+			t.json("resources").notNullable();
 			t.timestamp("created_at").notNullable();
 			t.index("user_id");
 		});
@@ -63,6 +67,9 @@ export default class CreateVisaTables extends Migration {
 			// The refresh family this token was minted in. Indexed because
 			// revoking a leaked family reads every token by it.
 			t.string("family_id", 64).nullable();
+			// RFC 8707 — what this token is for. Empty means unbound, and a
+			// resource server accepts it; bound, it is refused anywhere else.
+			t.json("audience").notNullable();
 			t.timestamp("created_at").notNullable();
 			t.index("family_id");
 			t.index("user_id");
@@ -77,6 +84,8 @@ export default class CreateVisaTables extends Migration {
 			t.timestamp("expires_at").notNullable();
 			t.timestamp("consumed_at").nullable();
 			t.timestamp("revoked_at").nullable();
+			// Carried so a rotation narrows from the same list the code bound.
+			t.json("resources").notNullable();
 			t.timestamp("created_at").notNullable();
 			t.index("family_id");
 			t.index("user_id");
