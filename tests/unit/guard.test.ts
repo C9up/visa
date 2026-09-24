@@ -173,6 +173,8 @@ describe("visa > the guard", () => {
 		const secret = await seedToken({ userId: "user-7" });
 		const readOnly: GuardStore = {
 			findAccessToken: (hash) => memory.findAccessToken(hash),
+			saveAccessToken: (token) => memory.saveAccessToken(token),
+			revokeAccessToken: (hash, at) => memory.revokeAccessToken(hash, at),
 		};
 
 		const result = await guard(readOnly).verify(secret);
@@ -219,10 +221,81 @@ describe("visa > the guard", () => {
 		await expect(guard().authenticate()).rejects.toThrow(/bearer token/i);
 	});
 
-	it("tells a test client how to present a token", () => {
-		expect(guard().authenticateAsClient("tok_abc")).toEqual({
-			headers: { authorization: "Bearer tok_abc" },
+	it("mints a token for a user, as upstream's guard does", async () => {
+		const minting = visaGuard({
+			store: memory,
+			findUser,
+			tokenClientId: "first-party",
 		});
+
+		const token = await minting.createToken("user-7", ["contacts.read"], {
+			name: "CLI",
+		});
+
+		// The plaintext exists exactly once, on the way out.
+		expect(token.value).toBeTypeOf("string");
+		expect(token.toJSON().token).toBe(token.value);
+		expect(token.name).toBe("CLI");
+		expect(token.abilities).toEqual(["contacts.read"]);
+
+		// …and it is an ordinary token: it authenticates, and it is stored hashed.
+		const result = await minting.verify(token.value ?? "");
+		expect(result.authenticated).toBe(true);
+		expect(result.user?.id).toBe("user-7");
+		expect(await memory.findAccessToken(token.value ?? "")).toBeNull();
+	});
+
+	it("refuses to mint a token with no client to issue it to", async () => {
+		await expect(guard().createToken("user-7")).rejects.toThrow(
+			/tokenClientId/,
+		);
+	});
+
+	it("gives a minted token every ability by default", async () => {
+		const minting = visaGuard({
+			store: memory,
+			findUser,
+			tokenClientId: "first-party",
+		});
+
+		const token = await minting.createToken("user-7");
+
+		expect(token.abilities).toEqual(["*"]);
+		expect(token.allows("anything")).toBe(true);
+	});
+
+	it("revokes a token, once", async () => {
+		const minting = visaGuard({
+			store: memory,
+			findUser,
+			tokenClientId: "first-party",
+		});
+		const token = await minting.createToken("user-7");
+		const presented = token.value ?? "";
+
+		expect(await minting.invalidateToken(presented)).toBe(true);
+		expect((await minting.verify(presented)).authenticated).toBe(false);
+		// Already revoked, and a token nobody ever issued: neither is a thing to
+		// revoke, and saying so is how a caller tells the two from a success.
+		expect(await minting.invalidateToken(presented)).toBe(false);
+		expect(await minting.invalidateToken("never-existed")).toBe(false);
+	});
+
+	it("tells a test client how to be a user", async () => {
+		const minting = visaGuard({
+			store: memory,
+			findUser,
+			tokenClientId: "first-party",
+		});
+
+		const response = await minting.authenticateAsClient("user-7", ["*"]);
+		const header = response.headers?.authorization ?? "";
+
+		expect(header.startsWith("Bearer ")).toBe(true);
+		// The credential is real — a test authenticates the way the application
+		// will, not against a token the store has never seen.
+		const presented = header.slice("Bearer ".length);
+		expect((await minting.verify(presented)).authenticated).toBe(true);
 	});
 
 	it("is named, so `auth.use()` can reach it", () => {

@@ -19,7 +19,7 @@
  * it — the same rule every other package in this universe follows.
  */
 
-import { hashSecret } from "./crypto.js";
+import { hashSecret, randomToken } from "./crypto.js";
 import { verifyAccessToken } from "./introspect.js";
 import type { VisaStore } from "./store.js";
 
@@ -48,7 +48,10 @@ export interface GuardUser {
  */
 export type GuardStore = Pick<
 	VisaStore,
-	"findAccessToken" | "touchAccessToken"
+	| "findAccessToken"
+	| "touchAccessToken"
+	| "saveAccessToken"
+	| "revokeAccessToken"
 >;
 
 /** What a guard answers. Warden's `AuthResult`, declared here so visa owes it nothing. */
@@ -88,6 +91,15 @@ export class VisaAccessToken {
 	readonly name: string | null;
 	readonly expiresAt: Date | null;
 	readonly lastUsedAt: Date | null;
+	/**
+	 * The token itself, and only just after it was created.
+	 *
+	 * Upstream's `value`: the one moment the plaintext exists is when it is
+	 * minted, because what is stored is a hash. A token read back from the
+	 * store never has it, and that is not a gap — it is why a database copy is
+	 * not a set of working tokens.
+	 */
+	readonly value?: string;
 
 	constructor(attributes: {
 		clientId: string;
@@ -96,6 +108,7 @@ export class VisaAccessToken {
 		name?: string | null;
 		expiresAt?: Date | null;
 		lastUsedAt?: Date | null;
+		value?: string;
 	}) {
 		this.clientId = attributes.clientId;
 		if (attributes.userId !== undefined) this.userId = attributes.userId;
@@ -103,6 +116,7 @@ export class VisaAccessToken {
 		this.name = attributes.name ?? null;
 		this.expiresAt = attributes.expiresAt ?? null;
 		this.lastUsedAt = attributes.lastUsedAt ?? null;
+		if (attributes.value !== undefined) this.value = attributes.value;
 	}
 
 	/** `*` means every ability — upstream's rule, read off its build. */
@@ -140,6 +154,7 @@ export class VisaAccessToken {
 	toJSON(): {
 		type: "bearer";
 		name: string | null;
+		token: string | undefined;
 		clientId: string;
 		abilities: string[];
 		lastUsedAt: Date | null;
@@ -148,6 +163,9 @@ export class VisaAccessToken {
 		return {
 			type: "bearer",
 			name: this.name,
+			// Present exactly once, on the token `createToken` just returned —
+			// which is the only time a caller can hand it to anybody.
+			token: this.value,
 			clientId: this.clientId,
 			abilities: this.abilities,
 			lastUsedAt: this.lastUsedAt,
@@ -155,6 +173,9 @@ export class VisaAccessToken {
 		};
 	}
 }
+
+/** An hour, as the token endpoint uses by default. */
+const DEFAULT_TTL = 3600;
 
 export interface VisaGuardConfig {
 	/**
@@ -181,6 +202,18 @@ export interface VisaGuardConfig {
 	findClientSubject?: (clientId: string) => Promise<GuardUser | null>;
 	/** Guard name, for `auth.use(name)`. Defaults to `visa`. */
 	name?: string;
+	/**
+	 * The client a token minted by {@link VisaGuard.createToken} belongs to.
+	 *
+	 * Upstream's guard needs no such thing because it has no clients. Here
+	 * every token is issued TO somebody, and one with no client could not be
+	 * introspected, revoked by its owner, or listed on a "connected
+	 * applications" screen. Name the first-party application and a minted
+	 * token is an ordinary token in every other respect.
+	 */
+	tokenClientId?: string;
+	/** How long a minted token lasts — upstream's `expiresIn`, in seconds. */
+	expiresInSeconds?: number;
 }
 
 /**
@@ -219,17 +252,83 @@ export class VisaGuard {
 	}
 
 	/**
-	 * The header a test client sends to present `token`.
+	 * Mint a token for `user`, as upstream's guard does.
 	 *
-	 * NAMED DEVIATION — upstream takes the USER and mints a token for them.
-	 * Here it takes the token, for the reason warden states for its own
-	 * access-token guard: the credential is issued out of band. In OAuth that
-	 * is not a detail, it is the point — a token exists because a client asked
-	 * and a user consented, and a guard that could mint one for any user would
-	 * be a second issuer with neither of those checks.
+	 * The token is a real one: stored hashed, listed, introspectable,
+	 * revocable. What it skips is the authorization code flow, so it is for a
+	 * FIRST-PARTY client you own — `tokenClientId` — and nothing here should
+	 * ever be handed a third-party client id.
 	 */
-	authenticateAsClient(token: string): GuardClientResponse {
-		return { headers: { authorization: `Bearer ${token}` } };
+	async createToken(
+		user: { id: string } | string,
+		abilities: string[] = ["*"],
+		options: { name?: string; expiresInSeconds?: number } = {},
+	): Promise<VisaAccessToken> {
+		const clientId = this.#config.tokenClientId;
+		if (clientId === undefined) {
+			throw new Error(
+				"[visa] createToken needs `tokenClientId` — a token is always issued to a client. Name the first-party application in visaGuard({ tokenClientId }).",
+			);
+		}
+		const userId = typeof user === "string" ? user : user.id;
+		const ttl =
+			options.expiresInSeconds ?? this.#config.expiresInSeconds ?? DEFAULT_TTL;
+		const secret = randomToken();
+		const expiresAt = new Date(Date.now() + ttl * 1000);
+
+		await this.#store().saveAccessToken({
+			tokenHash: hashSecret(secret),
+			clientId,
+			userId,
+			scopes: abilities,
+			expiresAt,
+		});
+
+		return new VisaAccessToken({
+			clientId,
+			userId,
+			abilities,
+			name: options.name ?? null,
+			expiresAt,
+			// The one moment the plaintext exists.
+			value: secret,
+		});
+	}
+
+	/**
+	 * Revoke a token — upstream's `invalidateToken`.
+	 *
+	 * NAMED DEVIATION — upstream's guard is built per request and invalidates
+	 * the token it just authenticated with, so it takes no argument. A warden
+	 * strategy is shared by the whole application and holds no per-request
+	 * state, by warden's own rule, so the token to revoke is passed in. A
+	 * sign-out handler has it: it is the bearer credential of the request.
+	 *
+	 * Answers whether the token was there to revoke.
+	 */
+	async invalidateToken(presented: string): Promise<boolean> {
+		const store = this.#store();
+		const hash = hashSecret(presented);
+		const existing = await store.findAccessToken(hash);
+		if (existing === null || existing.revokedAt !== undefined) return false;
+		await store.revokeAccessToken(hash, new Date());
+		return true;
+	}
+
+	/**
+	 * What a test client sends to be `user` — upstream's signature.
+	 *
+	 * It mints a token, as upstream does, so a test authenticates the way the
+	 * application will rather than against a credential the store has never
+	 * seen.
+	 */
+	async authenticateAsClient(
+		user: { id: string } | string,
+		abilities: string[] = ["*"],
+		options: { name?: string; expiresInSeconds?: number } = {},
+	): Promise<GuardClientResponse> {
+		const token = await this.createToken(user, abilities, options);
+		return { headers: { authorization: `Bearer ${token.value}` } };
 	}
 
 	async verify(presented: string): Promise<GuardResult> {
