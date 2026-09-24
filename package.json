@@ -1,6 +1,6 @@
 {
 	"name": "@c9up/visa",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Visa \u2014 OAuth 2.1 authorization server for the Ream framework: authorization code with PKCE, refresh rotation, revocation and introspection, on a store contract",
 	"license": "MIT",
 	"type": "module",
