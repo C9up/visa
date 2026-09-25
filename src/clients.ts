@@ -157,6 +157,7 @@ function stringOrUndefined(value: unknown): string | undefined {
 export async function authenticateClient(
 	credentials: ClientCredentials,
 	load: (id: string) => Promise<Client | null>,
+	now: Date = new Date(),
 ): Promise<Client> {
 	if (credentials.clientId === undefined) {
 		throw new OAuthError("invalid_client", "Client authentication failed.");
@@ -190,6 +191,15 @@ export async function authenticateClient(
 		client.secretHash === undefined ||
 		!secretMatches(credentials.clientSecret, client.secretHash)
 	) {
+		throw new OAuthError("invalid_client", "Client authentication failed.");
+	}
+
+	// Registration may have answered `client_secret_expires_at`. This is where
+	// that answer becomes true: checked after the secret matched, so a wrong
+	// secret and an expired one are still the same sentence to the caller.
+	// Every endpoint that authenticates a client — token, introspection,
+	// revocation — arrives here, so one check covers all three.
+	if (client.secretExpiresAt !== undefined && client.secretExpiresAt <= now) {
 		throw new OAuthError("invalid_client", "Client authentication failed.");
 	}
 	return client;

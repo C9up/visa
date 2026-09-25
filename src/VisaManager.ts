@@ -29,6 +29,7 @@ import {
 	type ClientRegistrationResponse,
 	type RegistrationOptions,
 	registrationResponse,
+	secretExpiryFor,
 	validateRegistration,
 } from "./register.js";
 import type { VisaStore } from "./store.js";
@@ -95,6 +96,8 @@ export class VisaManager {
 		scopes?: string[];
 		tokenEndpointAuthMethod?: ClientAuthMethod;
 		trusted?: boolean;
+		/** When the issued secret stops working. Omitted means it does not. */
+		secretExpiresAt?: Date;
 	}): Promise<{ client: Client; secret?: string }> {
 		// Refused at registration, not at the first authorization request: a
 		// URI that cannot be parsed would otherwise throw out of
@@ -112,6 +115,11 @@ export class VisaManager {
 			tokenEndpointAuthMethod: method,
 			...(input.trusted === undefined ? {} : { trusted: input.trusted }),
 			...(secret === undefined ? {} : { secretHash: hashSecret(secret) }),
+			// Only alongside a secret: an expiry on a client that has none is a
+			// date nothing would ever read.
+			...(secret === undefined || input.secretExpiresAt === undefined
+				? {}
+				: { secretExpiresAt: input.secretExpiresAt }),
 		};
 		const store = this.#config.store;
 		if (!("addClient" in store) || typeof store.addClient !== "function") {
@@ -140,6 +148,10 @@ export class VisaManager {
 	): Promise<ClientRegistrationResponse> {
 		const options = this.#config.registration ?? {};
 		const metadata = validateRegistration(request, options, presentedToken);
+		// Computed once, here: the same value is stored on the client and
+		// answered in the 201 body, so the server cannot announce an expiry it
+		// does not enforce.
+		const secretExpiresAt = secretExpiryFor(now, options.secretTtlSeconds);
 		const { client, secret } = await this.registerClient({
 			// The id is ours to choose: a client naming itself could claim one
 			// that already exists and read another application's tokens.
@@ -149,8 +161,9 @@ export class VisaManager {
 			grantTypes: metadata.grantTypes,
 			scopes: metadata.scopes,
 			tokenEndpointAuthMethod: metadata.tokenEndpointAuthMethod,
+			...(secretExpiresAt === undefined ? {} : { secretExpiresAt }),
 		});
-		return registrationResponse(client, now, secret, options);
+		return registrationResponse(client, now, secret);
 	}
 
 	/**

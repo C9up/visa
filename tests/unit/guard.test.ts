@@ -31,6 +31,7 @@ describe("visa > the guard", () => {
 			expiresAt?: Date;
 			revokedAt?: Date;
 			lastUsedAt?: Date;
+			audience?: string[];
 		} = {},
 	): Promise<string> {
 		const secret = overrides.secret ?? "tok_abcdef";
@@ -46,6 +47,9 @@ describe("visa > the guard", () => {
 			...(overrides.lastUsedAt === undefined
 				? {}
 				: { lastUsedAt: overrides.lastUsedAt }),
+			...(overrides.audience === undefined
+				? {}
+				: { audience: overrides.audience }),
 		});
 		return secret;
 	}
@@ -65,6 +69,53 @@ describe("visa > the guard", () => {
 		expect(result.authenticated).toBe(true);
 		expect(result.user?.id).toBe("user-7");
 		expect(result.user?.roles).toEqual(["member"]);
+	});
+
+	it("refuses a token minted for another resource (RFC 8707)", async () => {
+		// The guard names a resource in its challenge; this is that name being
+		// worth something. Two resource servers behind one authorization
+		// server: the calendar's token must not open the file store.
+		const secret = await seedToken({
+			userId: "user-7",
+			audience: ["https://calendar.example.com"],
+		});
+
+		const result = await visaGuard({
+			store: memory,
+			findUser,
+			resource: "https://files.example.com",
+		}).verify(secret);
+
+		expect(result.authenticated).toBe(false);
+	});
+
+	it("accepts a token bound to the resource it guards", async () => {
+		const secret = await seedToken({
+			userId: "user-7",
+			audience: ["https://files.example.com"],
+		});
+
+		const result = await visaGuard({
+			store: memory,
+			findUser,
+			resource: "https://files.example.com",
+		}).verify(secret);
+
+		expect(result.authenticated).toBe(true);
+	});
+
+	it("still accepts a token bound to nothing", async () => {
+		// Every token issued before a client started asking for a resource.
+		// Refusing them would break each one.
+		const secret = await seedToken({ userId: "user-7" });
+
+		const result = await visaGuard({
+			store: memory,
+			findUser,
+			resource: "https://files.example.com",
+		}).verify(secret);
+
+		expect(result.authenticated).toBe(true);
 	});
 
 	it("refuses a token whose account is no longer available", async () => {

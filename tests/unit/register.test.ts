@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { authenticateClient } from "../../src/clients.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 import { VisaManager } from "../../src/VisaManager.js";
 
@@ -114,6 +115,71 @@ describe("visa > dynamic client registration", () => {
 		expect(created.client_secret_expires_at).toBe(
 			Math.floor(now.getTime() / 1000) + 3600,
 		);
+	});
+
+	it("stops accepting the secret once that date passes", async () => {
+		// The date answered at registration was decoration: nothing stored it
+		// and nothing checked it, so a secret advertised as expiring in an hour
+		// worked forever.
+		const visa = server({ enabled: true, secretTtlSeconds: 3600 });
+		const now = new Date("2026-01-01T00:00:00Z");
+		const created = await visa.register(
+			{ redirect_uris: [CALLBACK] },
+			undefined,
+			now,
+		);
+		const credentials = {
+			clientId: created.client_id,
+			clientSecret: created.client_secret,
+		};
+		const load = async (id: string) => store.findClient(id);
+
+		// A minute before, and a minute after.
+		await expect(
+			authenticateClient(credentials, load, new Date("2026-01-01T00:59:00Z")),
+		).resolves.toMatchObject({ id: created.client_id });
+		await expect(
+			authenticateClient(credentials, load, new Date("2026-01-01T01:01:00Z")),
+		).rejects.toMatchObject({ code: "invalid_client" });
+	});
+
+	it("keeps a secret with no TTL working", async () => {
+		const visa = server({ enabled: true });
+		const created = await visa.register({ redirect_uris: [CALLBACK] });
+
+		await expect(
+			authenticateClient(
+				{
+					clientId: created.client_id,
+					clientSecret: created.client_secret,
+				},
+				async (id: string) => store.findClient(id),
+				new Date("2099-01-01T00:00:00Z"),
+			),
+		).resolves.toMatchObject({ id: created.client_id });
+	});
+
+	it("refuses a TTL that is not a whole number of seconds", async () => {
+		// A deployment's value, not a caller's, so it says so as a config error
+		// rather than blaming the client. Rounding it would issue a secret that
+		// expires at a time nobody chose.
+		for (const ttl of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+			await expect(
+				server({ enabled: true, secretTtlSeconds: ttl }).register({
+					redirect_uris: [CALLBACK],
+				}),
+			).rejects.toMatchObject({ code: "E_VISA_INVALID_SECRET_TTL" });
+		}
+	});
+
+	it("refuses a list carrying something that is not a string", async () => {
+		// Filtering it answered 201 to a request nobody wrote: the client
+		// believed it had registered two redirect uris and had one.
+		await expect(
+			server({ enabled: true }).register({
+				redirect_uris: [CALLBACK, 42],
+			}),
+		).rejects.toMatchObject({ code: "invalid_client_metadata" });
 	});
 
 	it("takes an initial access token when one is required", async () => {

@@ -364,7 +364,17 @@ export class VisaGuard {
 	async verify(presented: string): Promise<GuardResult> {
 		const store = this.#store();
 		const now = new Date();
-		const verified = await verifyAccessToken(presented, store, now);
+		// The resource this guard declares is the resource it enforces. Passing
+		// it is the whole of RFC 8707 on this side: without it a token minted
+		// for another resource server — one the same authorization server also
+		// serves — is honoured here, and the `resource` advertised in the
+		// challenge is a claim nothing backs.
+		const verified = await verifyAccessToken(
+			presented,
+			store,
+			now,
+			this.#config.resource,
+		);
 		if (verified === null) {
 			return { authenticated: false, error: "Invalid or expired access token" };
 		}

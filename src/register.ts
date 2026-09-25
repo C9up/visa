@@ -20,7 +20,7 @@
  * it decide what it may do.
  */
 
-import { OAuthError } from "./errors.js";
+import { OAuthError, VisaError } from "./errors.js";
 import type { Client, ClientAuthMethod, GrantType } from "./types.js";
 
 /** The metadata a request may send (§2). Unknown members are ignored. */
@@ -163,7 +163,6 @@ export function registrationResponse(
 	client: Client,
 	issuedAt: Date,
 	secret: string | undefined,
-	options: RegistrationOptions,
 ): ClientRegistrationResponse {
 	const seconds = Math.floor(issuedAt.getTime() / 1000);
 	return {
@@ -172,13 +171,18 @@ export function registrationResponse(
 		client_id_issued_at: seconds,
 		// REQUIRED when a secret was issued, and `0` is the spelling for "never"
 		// — not an omission, which would mean the field was not answered.
+		//
+		// Read off the client rather than recomputed from the options: the
+		// answer and the stored expiry are then the same value by construction,
+		// and cannot drift into a server that announces an expiry it does not
+		// enforce.
 		...(secret === undefined
 			? {}
 			: {
 					client_secret_expires_at:
-						options.secretTtlSeconds === undefined
+						client.secretExpiresAt === undefined
 							? 0
-							: seconds + options.secretTtlSeconds,
+							: Math.floor(client.secretExpiresAt.getTime() / 1000),
 				}),
 		redirect_uris: client.redirectUris,
 		grant_types: client.grantTypes,
@@ -243,6 +247,31 @@ function assertRedirectUri(value: string): void {
 	);
 }
 
+/**
+ * When a secret issued now stops working, or `undefined` for never.
+ *
+ * The TTL is the deployment's value, not the client's, so a bad one is a
+ * configuration mistake and says so — `VisaError`, not an OAuth error the
+ * caller would read as their own fault. Refused rather than rounded: a
+ * fractional or negative TTL means someone intended something this cannot
+ * carry out, and a secret quietly issued already-expired (or never expiring)
+ * is the worse answer either way.
+ */
+export function secretExpiryFor(
+	issuedAt: Date,
+	ttlSeconds: number | undefined,
+): Date | undefined {
+	if (ttlSeconds === undefined) return undefined;
+	if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) {
+		throw new VisaError(
+			"E_VISA_INVALID_SECRET_TTL",
+			`registration.secretTtlSeconds must be a positive whole number of seconds; received ${ttlSeconds}.`,
+			{ hint: "Leave it out for a secret that never expires." },
+		);
+	}
+	return new Date(issuedAt.getTime() + ttlSeconds * 1000);
+}
+
 function readStringList(value: unknown): string[] {
 	if (value === undefined || value === null) return [];
 	if (!Array.isArray(value)) {
@@ -251,7 +280,17 @@ function readStringList(value: unknown): string[] {
 			"redirect_uris and grant_types must be arrays of strings.",
 		);
 	}
-	return value.filter((entry): entry is string => typeof entry === "string");
+	// Refused, not filtered. Dropping the entries that are not strings answers
+	// 201 to a request nobody wrote: `["https://app/cb", 42]` registered one
+	// redirect uri while the client believed it had registered two, and the
+	// second one silently not working is found much later, by a user.
+	if (value.some((entry) => typeof entry !== "string")) {
+		throw new OAuthError(
+			"invalid_client_metadata",
+			"redirect_uris and grant_types must be arrays of strings.",
+		);
+	}
+	return [...value];
 }
 
 function readScope(value: unknown): string[] {

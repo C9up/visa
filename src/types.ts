@@ -32,6 +32,15 @@ export interface Client {
 	name: string;
 	/** Hashed. The plaintext is shown once, at registration, and never stored. */
 	secretHash?: string;
+	/**
+	 * When the secret stops working (RFC 7591 §3.2.1).
+	 *
+	 * Absent means it does not expire, which is the common case. Present, it is
+	 * enforced at authentication — a `client_secret_expires_at` answered at
+	 * registration and never checked afterwards is a promise the server makes
+	 * and does not keep.
+	 */
+	secretExpiresAt?: Date;
 	redirectUris: string[];
 	grantTypes: GrantType[];
 	/** What this client may ever ask for; a request narrows it, never widens it. */
