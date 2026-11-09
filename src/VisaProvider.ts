@@ -14,6 +14,10 @@
  * decision; the page around it is yours. The README shows the ten lines.
  *
  * Duck-typed throughout: visa must not import its host's HTTP types.
+ *
+ * NAMED DEVIATION from the usual `request.all()`: these endpoints read the
+ * body only, and refuse a request that puts an OAuth parameter in the query
+ * string — see `readBody`.
  */
 
 import "./augmentations.js";
@@ -44,7 +48,10 @@ export interface VisaAppContext {
 interface VisaHttpContext {
 	request: {
 		header(name: string): string | undefined;
-		all(): Record<string, unknown>;
+		/** The parsed body — the only place an OAuth parameter is read from. */
+		body(): unknown;
+		/** Read only to refuse a request that put parameters in the URL. */
+		qs(): Record<string, unknown>;
 	};
 	response: {
 		status(code: number): unknown;
@@ -96,7 +103,7 @@ export default class VisaProvider {
 
 		router.post(`${prefix}/token`, async (ctx) => {
 			await this.#answer(ctx, async () => {
-				const body = ctx.request.all();
+				const body = readBody(ctx);
 				const credentials = manager.readCredentials({
 					body,
 					...readAuthorization(ctx),
@@ -113,7 +120,7 @@ export default class VisaProvider {
 
 		router.post(`${prefix}/introspect`, async (ctx) => {
 			await this.#answer(ctx, async () => {
-				const body = ctx.request.all();
+				const body = readBody(ctx);
 				const credentials = manager.readCredentials({
 					body,
 					...readAuthorization(ctx),
@@ -125,7 +132,7 @@ export default class VisaProvider {
 
 		router.post(`${prefix}/revoke`, async (ctx) => {
 			await this.#answer(ctx, async () => {
-				const body = ctx.request.all();
+				const body = readBody(ctx);
 				const credentials = manager.readCredentials({
 					body,
 					...readAuthorization(ctx),
@@ -144,7 +151,10 @@ export default class VisaProvider {
 			router.post(`${prefix}/register`, async (ctx) => {
 				await this.#answer(ctx, async () => {
 					const bearer = readBearer(ctx);
-					const created = await manager.register(ctx.request.all(), bearer);
+					const created = await manager.register(
+						readBody(ctx, REGISTRATION_PARAMETERS),
+						bearer,
+					);
 					// §3.2.1: 201, and the body carries a secret — no cache may
 					// keep it.
 					ctx.response.status(201);
@@ -245,12 +255,104 @@ export default class VisaProvider {
 	}
 }
 
+/**
+ * What may never travel in the URL of these endpoints.
+ *
+ * Every credential and every parameter the spec defines for them: the client's
+ * own (§2.3.1, RFC 7523), each grant's (§4), introspection's and revocation's
+ * (RFC 7662 §2.1, RFC 7009 §2.1), resource indicators (RFC 8707), a bearer
+ * token in its RFC 6750 §2.3 form, and the removed password grant's — a
+ * client still sending those sends a password.
+ */
+const OAUTH_PARAMETERS: ReadonlySet<string> = new Set([
+	"client_id",
+	"client_secret",
+	"client_assertion",
+	"client_assertion_type",
+	"grant_type",
+	"code",
+	"code_verifier",
+	"redirect_uri",
+	"refresh_token",
+	"scope",
+	"resource",
+	"token",
+	"token_type_hint",
+	"access_token",
+	"username",
+	"password",
+]);
+
+/** The same, plus the client metadata a registration carries (RFC 7591 §2). */
+const REGISTRATION_PARAMETERS: ReadonlySet<string> = new Set([
+	...OAUTH_PARAMETERS,
+	"redirect_uris",
+	"token_endpoint_auth_method",
+	"grant_types",
+	"response_types",
+	"client_name",
+	"client_uri",
+	"logo_uri",
+	"contacts",
+	"tos_uri",
+	"policy_uri",
+	"jwks_uri",
+	"jwks",
+	"software_id",
+	"software_version",
+	"software_statement",
+]);
+
+/**
+ * The parameters of a machine endpoint, read from the body and nowhere else.
+ *
+ * Every one of these requests carries a credential — a client secret, a code,
+ * a refresh or access token. RFC 6749 §2.3.1 says client credentials "MUST NOT
+ * be included in the request URI", and §3.2, RFC 7009 §2.1, RFC 7662 §2.1 and
+ * RFC 7591 §3.1 all define the parameters as a POST body. A URL is kept by
+ * access logs, proxies and traces where a body is not.
+ *
+ * So the query string is never read, and a request that puts an OAuth
+ * parameter there is refused rather than answered: accepting it would teach a
+ * client that the URL works, and the secret it carries is already in a log.
+ * Anything else in the query (a tracing or cache-busting parameter a proxy
+ * added) is ignored, not refused.
+ */
+function readBody(
+	ctx: VisaHttpContext,
+	forbidden: ReadonlySet<string> = OAUTH_PARAMETERS,
+): Record<string, unknown> {
+	const inUrl = Object.keys(ctx.request.qs()).filter((key) =>
+		forbidden.has(key),
+	);
+	if (inUrl.length > 0) {
+		throw new OAuthError(
+			"invalid_request",
+			`OAuth parameters go in the request body, never in the URL: ${inUrl.join(", ")}.`,
+		);
+	}
+	const body = ctx.request.body();
+	if (body === undefined || body === null) return {};
+	if (!isRecord(body)) {
+		throw new OAuthError(
+			"invalid_request",
+			"The request body must be a form or a JSON object.",
+		);
+	}
+	return body;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** The initial access token a registration may carry (RFC 7591 §3). */
 function readBearer(ctx: VisaHttpContext): string | undefined {
 	const header = ctx.request.header("authorization");
 	if (header === undefined) return undefined;
 	const [scheme, value] = header.split(" ");
-	if (scheme?.toLowerCase() !== "bearer" || value === undefined)
+	// An empty value is no token at all, not a token that is the empty string.
+	if (scheme?.toLowerCase() !== "bearer" || value === undefined || value === "")
 		return undefined;
 	return value;
 }

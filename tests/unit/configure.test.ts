@@ -111,6 +111,40 @@ describe("visa > configure", () => {
 		expect(code).toContain('t.timestamp("created_at").notNullable()');
 	});
 
+	it("writes the secret-expiry column as its own migration, after the tables", async () => {
+		// The column AtlasStore writes a secret's expiry to: without it an
+		// expiry announced at registration is never enforced. Its own file, so
+		// an application whose tables already exist gets it by configuring again.
+		const { calls, codemods } = recorder();
+
+		await configure(codemods);
+
+		const migrations = calls.files
+			.filter((file) => file.path.startsWith("database/migrations/"))
+			.map((file) => file.path);
+		expect(migrations).toEqual([
+			"database/migrations/9000_create_visa_tables.ts",
+			"database/migrations/9001_add_visa_client_secret_expiry.ts",
+		]);
+		const upgrade = calls.files.find((file) =>
+			file.path.endsWith("9001_add_visa_client_secret_expiry.ts"),
+		);
+		expect(upgrade?.content).toContain('alterTable("visa_clients"');
+		expect(upgrade?.content).toContain(
+			't.timestamp("secret_expires_at").nullable()',
+		);
+		expect(upgrade?.content).toContain('t.dropColumn("secret_expires_at")');
+		// Declared once: 9000 creating it too would make 9001 fail on a fresh app.
+		const create = calls.files.find((file) =>
+			file.path.endsWith("9000_create_visa_tables.ts"),
+		);
+		const createCode = (create?.content ?? "")
+			.split("\n")
+			.filter((line) => !line.includes("//"))
+			.join("\n");
+		expect(createCode).not.toContain("secret_expires_at");
+	});
+
 	it("says in the config itself that the store has to be replaced", async () => {
 		// A memory store shipped to production loses every session on deploy.
 		const { calls, codemods } = recorder();

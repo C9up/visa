@@ -30,10 +30,8 @@ export class MemoryStore implements VisaStore {
 		for (const client of clients) this.#clients.set(client.id, client);
 	}
 
-	/** Register a client. Returns it, so a caller can keep the reference. */
-	addClient(client: Client): Client {
+	async saveClient(client: Client): Promise<void> {
 		this.#clients.set(client.id, client);
-		return client;
 	}
 
 	async findClient(id: string): Promise<Client | null> {

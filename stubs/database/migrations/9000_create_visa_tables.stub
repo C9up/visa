@@ -26,6 +26,8 @@ export default class CreateVisaTables extends Migration {
 			t.string("name", 255).notNullable();
 			// Null for a public client — a SPA or a native app has no secret to keep.
 			t.string("secret_hash", 255).nullable();
+			// `secret_expires_at` is added by 9001, so a table created before it
+			// existed gets it the same way a new one does.
 			t.json("redirect_uris").notNullable();
 			t.json("grant_types").notNullable();
 			t.json("scopes").notNullable();

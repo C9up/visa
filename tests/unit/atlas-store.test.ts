@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { VisaStore } from "../../src/store.js";
 import {
 	type AtlasDb,
 	type AtlasQuery,
 	AtlasStore,
 } from "../../src/stores/atlas.js";
+import { MemoryStore } from "../../src/stores/memory.js";
+import type { Client } from "../../src/types.js";
+import { VisaManager } from "../../src/VisaManager.js";
 
 /**
  * The store an application running atlas gets instead of writing twelve
@@ -500,4 +504,89 @@ describe("visa > the atlas store", () => {
 
 		await expect(store.findAccessToken("broken")).rejects.toThrow();
 	});
+});
+
+/**
+ * Every field of a client, through every store this package ships.
+ *
+ * A field one store drops is a promise the server makes and does not keep:
+ * `secretExpiresAt` lost on the way to the database is a secret announced as
+ * expiring that works for ever.
+ */
+describe("visa > the client contract, on every shipped store", () => {
+	const everyField: Client = {
+		id: "full",
+		name: "Every field",
+		secretHash: "hash",
+		secretExpiresAt: new Date("2031-01-02T03:04:05.000Z"),
+		redirectUris: ["https://app.example/cb", "https://app.example/cb2"],
+		grantTypes: ["authorization_code", "refresh_token", "client_credentials"],
+		scopes: ["profile", "contacts.read"],
+		tokenEndpointAuthMethod: "client_secret_post",
+		trusted: true,
+	};
+	const stores: Array<[string, () => VisaStore]> = [
+		["MemoryStore", () => new MemoryStore()],
+		["AtlasStore", () => new AtlasStore(new FakeDb())],
+	];
+
+	for (const [name, make] of stores) {
+		it(`${name} round-trips every field of a client`, async () => {
+			const store = make();
+			if (store.saveClient === undefined) throw new Error("no saveClient");
+
+			await store.saveClient({ ...everyField });
+
+			expect(await store.findClient("full")).toEqual(everyField);
+		});
+
+		it(`${name} registers a client over RFC 7591`, async () => {
+			const store = make();
+			const visa = new VisaManager({
+				issuer: "https://auth.example",
+				store,
+				registration: { enabled: true, secretTtlSeconds: 3600 },
+			});
+
+			const created = await visa.register({
+				redirect_uris: ["https://client.example/cb"],
+				client_name: "MCP",
+			});
+
+			const stored = await store.findClient(created.client_id);
+			expect(stored?.name).toBe("MCP");
+			// The expiry the 201 announced is the one the store kept.
+			expect(
+				stored?.secretExpiresAt === undefined
+					? undefined
+					: Math.floor(stored.secretExpiresAt.getTime() / 1000),
+			).toBe(created.client_secret_expires_at);
+		});
+
+		it(`${name} refuses an expired secret at the token endpoint`, async () => {
+			const visa = new VisaManager({
+				issuer: "https://auth.example",
+				store: make(),
+			});
+			const { secret } = await visa.registerClient({
+				id: "svc",
+				name: "Service",
+				redirectUris: ["https://svc.example/cb"],
+				grantTypes: ["client_credentials"],
+				tokenEndpointAuthMethod: "client_secret_post",
+				secretExpiresAt: new Date(Date.now() - 1000),
+			});
+
+			await expect(
+				visa.token(
+					{ grant_type: "client_credentials" },
+					{
+						clientId: "svc",
+						clientSecret: secret,
+						method: "client_secret_post",
+					},
+				),
+			).rejects.toMatchObject({ code: "invalid_client" });
+		});
+	}
 });

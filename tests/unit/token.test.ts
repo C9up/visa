@@ -282,16 +282,64 @@ describe("visa > token > refresh rotation", () => {
 			scope: "profile",
 		});
 		expect(narrowed.scope).toBe("profile");
+		expect((await h.visa.verify(narrowed.access_token))?.scopes).toEqual([
+			"profile",
+		]);
 
-		// Back up to what the user agreed to: refused, because the refresh
-		// token now carries the narrowed grant.
+		// Never wider than what the user agreed to.
 		await expect(
 			exchange(h, {
 				grant_type: "refresh_token",
 				refresh_token: narrowed.refresh_token,
-				scope: "profile email",
+				scope: "profile email openid",
 			}),
 		).rejects.toMatchObject({ code: "invalid_scope" });
+	});
+
+	it("narrows only the access token: the rotated refresh token keeps the grant (RFC 6749 §6)", async () => {
+		// "If a new refresh token is issued, the refresh token scope MUST be
+		// identical to that of the refresh token included by the client in the
+		// request." A down-scoped token for one call must not cost the rest of
+		// the user's consent for the whole session.
+		const h = await harness();
+		const { verifier, challenge } = pkce();
+		const code = await authorizeToCode(h, {
+			challenge,
+			scope: "profile email",
+		});
+		const pair = await exchange(h, {
+			grant_type: "authorization_code",
+			code,
+			redirect_uri: REDIRECT,
+			code_verifier: verifier,
+		});
+
+		const narrowed = await exchange(h, {
+			grant_type: "refresh_token",
+			refresh_token: pair.refresh_token,
+			scope: "profile",
+		});
+		expect(narrowed.scope).toBe("profile");
+
+		const restored = await exchange(h, {
+			grant_type: "refresh_token",
+			refresh_token: narrowed.refresh_token,
+			scope: "profile email",
+		});
+		expect(restored.scope).toBe("profile email");
+
+		// No `scope` at all: the original grant, not the last narrowing.
+		const unscoped = await exchange(h, {
+			grant_type: "refresh_token",
+			refresh_token: (
+				await exchange(h, {
+					grant_type: "refresh_token",
+					refresh_token: restored.refresh_token,
+					scope: "email",
+				})
+			).refresh_token,
+		});
+		expect(unscoped.scope).toBe("profile email");
 	});
 
 	it("refuses a refresh token presented by another client", async () => {

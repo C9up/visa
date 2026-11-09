@@ -103,6 +103,7 @@ export type {
 } from "./types.js";
 export {
 	type AuthorizationOutcome,
+	type ConsentTicket,
 	type VisaConfig,
 	VisaManager,
 } from "./VisaManager.js";

@@ -1,7 +1,20 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { authenticateClient } from "../../src/clients.js";
+import type { VisaStore } from "../../src/store.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 import { VisaManager } from "../../src/VisaManager.js";
+
+/** A full store minus `saveClient` — clients that live in someone else's table. */
+function withoutSaveClient(inner: MemoryStore): VisaStore {
+	return new Proxy<VisaStore>(inner, {
+		get(target, key) {
+			if (key === "saveClient") return undefined;
+			const value: unknown = Reflect.get(target, key);
+			// Bound: MemoryStore keeps its rows in private fields.
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
+}
 
 /**
  * Clients that register themselves (RFC 7591).
@@ -197,6 +210,71 @@ describe("visa > dynamic client registration", () => {
 			"letmein",
 		);
 		expect(created.client_id).toBeTypeOf("string");
+	});
+
+	it("refuses a token that only shares a prefix with the initial access token, or is longer", async () => {
+		const visa = server({ enabled: true, initialAccessToken: "letmein" });
+
+		for (const presented of ["letme", "letmeinx", "LETMEIN", ""]) {
+			await expect(
+				visa.register({ redirect_uris: [CALLBACK] }, presented),
+				presented,
+			).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		}
+	});
+
+	it("refuses to boot with an empty initial access token", () => {
+		// `Authorization: Bearer ` would match it — an endpoint the deployment
+		// meant to close, open to anyone who sends the header.
+		expect(() => server({ enabled: true, initialAccessToken: "" })).toThrow(
+			expect.objectContaining({ code: "E_VISA_INVALID_INITIAL_ACCESS_TOKEN" }),
+		);
+	});
+
+	it("persists the client it answers 201 for", async () => {
+		const created = await server({ enabled: true }).register({
+			redirect_uris: [CALLBACK],
+			client_name: "MCP",
+		});
+
+		const stored = await store.findClient(created.client_id);
+		expect(stored?.name).toBe("MCP");
+		expect(stored?.redirectUris).toEqual([CALLBACK]);
+	});
+
+	it("answers no 201 when the store fails to write the client", async () => {
+		// The secret is handed out once: answering it for a client whose insert
+		// failed hands out a credential nothing will ever accept.
+		class FailingStore extends MemoryStore {
+			override async saveClient(): Promise<void> {
+				throw new Error("insert failed");
+			}
+		}
+		store = new FailingStore();
+
+		await expect(
+			server({ enabled: true }).register({ redirect_uris: [CALLBACK] }),
+		).rejects.toThrow("insert failed");
+	});
+
+	it("refuses to boot with registration on and a store that cannot save clients", async () => {
+		// Otherwise the first `POST /register` would answer every MCP client a
+		// 500, with nothing at boot saying why.
+		const readOnly: VisaStore = withoutSaveClient(new MemoryStore());
+
+		expect(
+			() =>
+				new VisaManager({
+					issuer: ISSUER,
+					store: readOnly,
+					registration: { enabled: true },
+				}),
+		).toThrow(expect.objectContaining({ code: "E_VISA_STORE_READ_ONLY" }));
+		// Off, the same store boots: its clients live somewhere else.
+		const visa = new VisaManager({ issuer: ISSUER, store: readOnly });
+		await expect(
+			visa.registerClient({ id: "x", name: "X", redirectUris: [CALLBACK] }),
+		).rejects.toMatchObject({ code: "E_VISA_STORE_READ_ONLY" });
 	});
 
 	it("refuses a redirect URI that is not https or loopback http", async () => {

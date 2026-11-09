@@ -166,10 +166,12 @@ export class AtlasStore implements VisaStore {
 		const row = await this.#db.from(this.#tables.clients).where({ id }).first();
 		if (row === null) return null;
 		const secretHash = optionalString(row.secret_hash);
+		const secretExpiresAt = decodeDate(row.secret_expires_at);
 		return {
 			id: requireString(row.id, "id"),
 			name: requireString(row.name, "name"),
 			...(secretHash === undefined ? {} : { secretHash }),
+			...(secretExpiresAt === undefined ? {} : { secretExpiresAt }),
 			redirectUris: decodeList(row.redirect_uris, "redirect_uris"),
 			grantTypes: decodeList(row.grant_types, "grant_types").filter(
 				isGrantType,
@@ -180,12 +182,15 @@ export class AtlasStore implements VisaStore {
 		};
 	}
 
-	/** Persist a registered client. Not on the contract — what `registerClient` writes through. */
+	/** Persist a registered client — what `registerClient` writes through. */
 	async saveClient(client: Client): Promise<void> {
 		await this.#db.table(this.#tables.clients).insert({
 			id: client.id,
 			name: client.name,
 			secret_hash: client.secretHash ?? null,
+			// Without it an expiry announced at registration is never enforced:
+			// authentication reads it off the client and nowhere else.
+			secret_expires_at: client.secretExpiresAt ?? null,
 			redirect_uris: encodeList(client.redirectUris),
 			grant_types: encodeList(client.grantTypes),
 			scopes: encodeList(client.scopes),

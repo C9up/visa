@@ -20,6 +20,17 @@ import type {
 export interface VisaStore {
 	findClient(id: string): Promise<Client | null>;
 
+	/**
+	 * Persist a client — what `registerClient`, and so dynamic registration
+	 * (RFC 7591), writes through. Awaited: a 201 carrying a secret for a
+	 * client whose insert failed would hand out a credential nothing accepts.
+	 *
+	 * Optional, for a store whose clients live in a table another service
+	 * owns. Without it `registerClient` refuses, and a server with
+	 * registration turned on refuses to boot.
+	 */
+	saveClient?(client: Client): Promise<void>;
+
 	saveAuthorizationCode(code: AuthorizationCode): Promise<void>;
 	findAuthorizationCode(codeHash: string): Promise<AuthorizationCode | null>;
 	/**

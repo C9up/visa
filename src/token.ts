@@ -224,6 +224,13 @@ async function exchangeRefresh(
 	const requested = asString(request.scope);
 	const scopes =
 		requested === undefined ? record.scopes : narrow(requested, record.scopes);
+	const resources = narrowResources(
+		validateResources(
+			readResourceParameter(request.resource),
+			options.resourcesSupported,
+		),
+		record.resources ?? [],
+	);
 
 	if (!(await store.consumeRefreshToken(record.tokenHash, now))) throw invalid;
 
@@ -233,13 +240,18 @@ async function exchangeRefresh(
 			...(record.userId === undefined ? {} : { userId: record.userId }),
 			scopes,
 			familyId: record.familyId,
-			resources: narrowResources(
-				validateResources(
-					readResourceParameter(request.resource),
-					options.resourcesSupported,
-				),
-				record.resources ?? [],
-			),
+			resources,
+			// Only the ACCESS token is narrowed. RFC 6749 §6: a rotated refresh
+			// token's scope "MUST be identical to that of the refresh token
+			// included by the client in the request" — otherwise asking for a
+			// down-scoped token for one call would cost the rest of the user's
+			// consent for the whole session. Resources follow the same rule:
+			// RFC 8707 has a client refresh once per resource it calls, which
+			// only works if a token for one leaves the others reachable.
+			refresh: {
+				scopes: record.scopes,
+				resources: record.resources ?? [],
+			},
 		},
 		store,
 		options,
@@ -306,6 +318,13 @@ interface Issued {
 	familyId?: string;
 	/** RFC 8707 — what the token is for. Empty means unbound. */
 	resources?: string[];
+	/**
+	 * What the refresh token carries, when it differs from the access token.
+	 *
+	 * Absent, the refresh token carries the access token's scopes and
+	 * resources — the case of a code exchange, where both halves are the grant.
+	 */
+	refresh?: { scopes: string[]; resources: string[] };
 }
 
 /** Mint the pair and store both, hashed. */
@@ -347,18 +366,18 @@ async function issue(
 	const refreshTtl =
 		options.refreshTokenTtlSeconds ?? DEFAULTS.refreshTokenTtlSeconds;
 	const refreshToken = randomToken();
+	const refreshScopes = grant.refresh?.scopes ?? grant.scopes;
+	const refreshResources = grant.refresh?.resources ?? grant.resources ?? [];
 	await store.saveRefreshToken({
 		tokenHash: hashSecret(refreshToken),
 		familyId: grant.familyId,
 		clientId: grant.client.id,
 		...(grant.userId === undefined ? {} : { userId: grant.userId }),
-		scopes: grant.scopes,
+		scopes: refreshScopes,
 		expiresAt: new Date(now.getTime() + refreshTtl * 1000),
 		// Carried so a rotation can narrow from the same list the code bound —
 		// without it, the second token of a session would be unbound.
-		...(grant.resources === undefined || grant.resources.length === 0
-			? {}
-			: { resources: grant.resources }),
+		...(refreshResources.length === 0 ? {} : { resources: refreshResources }),
 	});
 	response.refresh_token = refreshToken;
 	return response;

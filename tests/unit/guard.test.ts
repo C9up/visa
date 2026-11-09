@@ -191,7 +191,24 @@ describe("visa > the guard", () => {
 		expect(code).toBe("E_UNAUTHORIZED_ACCESS");
 	});
 
-	it("also surfaces the scopes on permissions, merged with the user's own", async () => {
+	it("never turns a scope into a permission the user does not hold", async () => {
+		// A scope is chosen by the client's registration and granted by consent,
+		// which never checks the user's own rights. Merged into `permissions`, a
+		// scope named like a permission would open every `.permission()` gate
+		// that trusts `user.permissions` to a user who lacks it.
+		users.set("user-7", { id: "user-7", permissions: [] });
+		const secret = await seedToken({
+			userId: "user-7",
+			scopes: ["orders:write"],
+		});
+
+		const result = await guard().verify(secret);
+
+		expect(result.user?.permissions).toEqual([]);
+		expect(result.user?.currentAccessToken?.allows("orders:write")).toBe(true);
+	});
+
+	it("keeps the user's own permissions as they are, whatever the token's scopes", async () => {
 		users.set("user-7", { id: "user-7", permissions: ["profile.read"] });
 		const secret = await seedToken({
 			userId: "user-7",
@@ -200,12 +217,24 @@ describe("visa > the guard", () => {
 
 		const result = await guard().verify(secret);
 
-		expect(new Set(result.user?.permissions)).toEqual(
-			new Set(["profile.read", "contacts.read"]),
-		);
+		expect(result.user?.permissions).toEqual(["profile.read"]);
+		expect(result.user?.currentAccessToken?.abilities).toEqual([
+			"contacts.read",
+		]);
 		// The provider's object is the application's — a guard that mutated it
-		// would leak one request's scopes into the next.
-		expect(users.get("user-7")?.permissions).toEqual(["profile.read"]);
+		// would leak one request's token into the next.
+		expect(users.get("user-7")?.currentAccessToken).toBeUndefined();
+	});
+
+	it("adds no permissions to a user the provider gave none", async () => {
+		const secret = await seedToken({
+			userId: "user-7",
+			scopes: ["contacts.read"],
+		});
+
+		const result = await guard().verify(secret);
+
+		expect(result.user?.permissions).toBeUndefined();
 	});
 
 	it("reports the PREVIOUS use and records this one", async () => {

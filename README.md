@@ -41,13 +41,39 @@ consent screen, and both belong to your application. See below.
 - **Refresh rotation with replay detection.** Every use mints a new token; a
   spent one coming back proves a leak, and since there is no telling the thief
   from the victim, the whole family goes.
+- **Parameters in the body only.** `/token`, `/introspect`, `/revoke` and
+  `/register` read the request body only, and answer `invalid_request` to a
+  request that puts an OAuth parameter (`client_secret`, `code`, `token`,
+  `refresh_token`, registration metadata on `/register`…) in the query
+  string: a secret, a code or a token in a URL ends up in access logs,
+  proxies and traces (RFC 6749 §2.3.1). Other query parameters are ignored.
+- **A scope is not a permission.** `visaGuard()` puts the token's scopes on
+  `ctx.auth.user.currentAccessToken` (`allows`, `denies`, `authorize`) and
+  leaves `user.permissions` as your user provider returned it. A scope is
+  chosen by the client and granted by consent, which never checks the user's
+  own rights — so a route that needs both checks both.
 - **One sentence per failure.** "No such code", "expired", "already used" and
   "wrong client" are `invalid_grant: The code is not valid.` — telling them
   apart is how a code space gets probed.
 
 ## Wiring `/authorize`
 
-The decision is visa's; the page is yours.
+The decision is visa's; the page is yours. The consent page is the one place a
+user hands an application their data, so three things are not optional:
+
+- **The consent POST is CSRF-protected.** Without it, a page on another site
+  auto-submits the form — its own client, its own PKCE challenge,
+  `approve=1` — and a signed-in user grants the attacker's application without
+  seeing anything (RFC 6819 §4.4.1.9). Turn on blackhole's CSRF
+  (`csrf: true` in `config/blackhole.ts`) and put `{{ csrfField() }}` in the
+  form.
+- **The consent page cannot be framed.** A framed page lets another site lay
+  its own button over "Allow" (clickjacking, RFC 9700 §4.15). Send
+  `X-Frame-Options: DENY` from this page, and `frame-ancestors 'none'` if you
+  build its `Content-Security-Policy` yourself.
+- **The POST grants what the page showed, not what the POST says.** The
+  validated request stays on the server, in a single-use ticket bound to the
+  session and the user. The form carries only the ticket's id.
 
 ```ts
 // start/routes.ts
@@ -63,21 +89,54 @@ router.get('/oauth/authorize', async (ctx) => {
   }
   if (!ctx.auth.user) return ctx.response.redirect('/login?next=' + encodeURIComponent(ctx.request.url(true)))
 
+  // Kept server-side: the POST below grants this, whatever it is sent.
+  const ticket = visa.consentTicket(outcome.request, ctx.auth.user.id)
+  ctx.session.put('visa.consent', ticket)
+
+  ctx.response.header('x-frame-options', 'DENY')
   return ctx.view.render('oauth/consent', {
     client: outcome.request.client,
     scopes: outcome.request.scopes,
+    ticket: ticket.id,
   })
 })
 
+// CSRF-protected by blackhole, like every other form POST.
 router.post('/oauth/consent', async (ctx) => {
-  const outcome = await visa.authorize(ctx.request.all(), ctx.auth.user.id)
-  if (outcome.type !== 'consent') return ctx.response.redirect('/')
-  const url = ctx.request.input('approve')
-    ? await visa.grant(outcome.request, ctx.auth.user.id)
-    : visa.deny(outcome.request)
+  const user = ctx.auth.getUserOrFail()
+  // Pulled, not read: a second POST of the same form finds nothing.
+  const validated = await visa.redeemConsentTicket(
+    ctx.session.pull('visa.consent'),
+    ctx.request.input('ticket'),
+    user.id,
+  )
+  if (validated === null) {
+    // No ticket, another page's ticket, another user, expired, or a client
+    // that changed since the page was shown: start again.
+    return ctx.view.render('oauth/error', { error: { error: 'invalid_request' } })
+  }
+
+  const url = ctx.request.input('approve') === '1'
+    ? await visa.grant(validated, user.id)
+    : visa.deny(validated)
   return ctx.response.redirect(url)
 })
 ```
+
+```html
+<!-- resources/views/oauth/consent.inker -->
+<form method="POST" action="/oauth/consent">
+  {{ csrfField() }}
+  <input type="hidden" name="ticket" value="{{ ticket }}">
+  <button name="approve" value="1">Allow</button>
+  <button name="approve" value="0">Deny</button>
+</form>
+```
+
+`redeemConsentTicket` validates the request again (a client may have lost a
+scope or a redirect URI meanwhile) and mints nothing: the code exists only once
+`grant` runs. A ticket lasts ten minutes; `consentTicketTtlSeconds` in the
+config changes it.
 
 ## Registering a client
 
@@ -140,11 +199,23 @@ trailing slash is dropped — every endpoint is built by concatenation, so
 
 ## The store
 
-`MemoryStore` is for tests and a single development process. Everything else
-implements `VisaStore` — twelve methods. Two of them, `consumeAuthorizationCode`
-and `consumeRefreshToken`, **must be atomic**: two requests racing with the same
-code must not both succeed, and that single-use guarantee is what replay
-detection is built on.
+`MemoryStore` is for tests and a single development process. `AtlasStore`
+(`@c9up/visa/stores/atlas`) runs on the tables of the migration
+`ream configure` writes. Anything else implements `VisaStore`. Two of its
+methods, `consumeAuthorizationCode` and `consumeRefreshToken`, **must be
+atomic**: two requests racing with the same code must not both succeed, and
+that single-use guarantee is what replay detection is built on.
+
+`saveClient` is optional, for clients that live in a table you do not own.
+Without it `registerClient` throws, and a server with `registration.enabled`
+refuses to boot rather than answering 500 to every registration.
+
+A `visa_clients` table created by visa 0.1.3 or earlier has no
+`secret_expires_at` column, and `AtlasStore` writes it on every client — a
+secret's expiry is enforced from it. Run `ream configure @c9up/visa` again
+before upgrading: your existing `9000_create_visa_tables` is left alone and
+`9001_add_visa_client_secret_expiry` lands beside it; `migration:run` adds the
+column.
 
 ## What is not here yet
 

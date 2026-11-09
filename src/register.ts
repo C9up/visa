@@ -20,6 +20,7 @@
  * it decide what it may do.
  */
 
+import { hashMatches, sha256 } from "./crypto.js";
 import { OAuthError, VisaError } from "./errors.js";
 import type { Client, ClientAuthMethod, GrantType } from "./types.js";
 
@@ -113,10 +114,16 @@ export function validateRegistration(
 		);
 	}
 	if (options.initialAccessToken !== undefined) {
-		// Constant-time is not the point here: the token is compared once per
-		// registration, and a registration endpoint is not a guessing oracle
-		// worth the machinery. Absent or wrong reads the same to the caller.
-		if (presentedToken !== options.initialAccessToken) {
+		// Constant time, like every other secret here. This one is a static,
+		// operator-chosen string — often shorter than a minted token — that an
+		// anonymous caller may test once per request, as often as they like.
+		// Both sides are hashed first so the comparison never depends on the
+		// configured length either. Absent or wrong reads the same to the caller.
+		if (
+			presentedToken === undefined ||
+			presentedToken === "" ||
+			!hashMatches(sha256(presentedToken), sha256(options.initialAccessToken))
+		) {
 			throw new OAuthError(
 				"invalid_client_metadata",
 				"Registration on this server needs an initial access token.",

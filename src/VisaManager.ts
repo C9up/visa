@@ -21,7 +21,7 @@ import {
 	readCredentials,
 	redirectUriMatches,
 } from "./clients.js";
-import { hashSecret, randomToken } from "./crypto.js";
+import { hashMatches, hashSecret, randomToken, sha256 } from "./crypto.js";
 import { OAuthError, VisaError } from "./errors.js";
 import { introspect, revoke, verifyAccessToken } from "./introspect.js";
 import {
@@ -49,7 +49,32 @@ export interface VisaConfig extends AuthorizeOptions, TokenOptions {
 	store: VisaStore;
 	/** Whether clients may register themselves, and on what terms (RFC 7591). */
 	registration?: RegistrationOptions;
+	/**
+	 * How long a consent page may stay open before its answer is refused, in
+	 * seconds. Ten minutes by default — see {@link VisaManager.consentTicket}.
+	 */
+	consentTicketTtlSeconds?: number;
 }
+
+/**
+ * What the application keeps server-side between the consent page and the
+ * POST that answers it — in the session, never in the form.
+ *
+ * Plain values only, so any session store can hold it: the request as it was
+ * validated, not the client record (which carries the secret's hash).
+ */
+export interface ConsentTicket {
+	/** Random, 256 bits. The consent form posts it back; nothing else does. */
+	id: string;
+	/** Who was asked. Another user answering it is refused. */
+	userId: string;
+	/** Milliseconds since the epoch. */
+	expiresAt: number;
+	/** The authorization request, rebuilt from what was validated. */
+	request: AuthorizationRequest;
+}
+
+const DEFAULT_CONSENT_TICKET_TTL_SECONDS = 600;
 
 /** What `authorize()` decided. */
 export type AuthorizationOutcome =
@@ -71,6 +96,7 @@ export class VisaManager {
 		// with a broken issuer answers every metadata fetch with something no
 		// client can use, and says so nowhere.
 		this.#config = { ...config, issuer: normalizeIssuer(config.issuer) };
+		assertRegistration(config);
 	}
 
 	get issuer(): string {
@@ -122,16 +148,10 @@ export class VisaManager {
 				: { secretExpiresAt: input.secretExpiresAt }),
 		};
 		const store = this.#config.store;
-		if (!("addClient" in store) || typeof store.addClient !== "function") {
-			throw new VisaError(
-				"E_VISA_STORE_READ_ONLY",
-				"This store cannot register clients; create them where they live.",
-				{
-					hint: "MemoryStore.addClient exists; a database store registers rows.",
-				},
-			);
-		}
-		store.addClient(client);
+		if (store.saveClient === undefined) throw readOnlyStore();
+		// Awaited: the secret below is handed out once, and handing it out for a
+		// client whose write failed is a credential nothing will ever accept.
+		await store.saveClient(client);
 		return secret === undefined ? { client } : { client, secret };
 	}
 
@@ -243,6 +263,92 @@ export class VisaManager {
 			now,
 		);
 		return successRedirect(validated, code);
+	}
+
+	/**
+	 * Remember what the consent page asks, so its answer cannot change it.
+	 *
+	 * The application puts the ticket in the user's session, renders its `id`
+	 * as a hidden field, and on the POST hands both to
+	 * {@link redeemConsentTicket}. What gets granted is then the request the
+	 * user was shown — not whatever parameters the POST carries — and the
+	 * session makes it single use (`session.pull`) and bound to this browser.
+	 */
+	consentTicket(
+		validated: ValidatedRequest,
+		userId: string,
+		now: Date = new Date(),
+	): ConsentTicket {
+		const ttl =
+			this.#config.consentTicketTtlSeconds ??
+			DEFAULT_CONSENT_TICKET_TTL_SECONDS;
+		return {
+			id: randomToken(),
+			userId,
+			expiresAt: now.getTime() + ttl * 1000,
+			request: {
+				response_type: "code",
+				client_id: validated.client.id,
+				redirect_uri: validated.redirectUri,
+				// Joined from what was resolved, so an omitted `scope` that
+				// defaulted to the client's list is the list the user saw, even
+				// if the client registers more by the time the user answers.
+				scope: validated.scopes.join(" "),
+				code_challenge: validated.codeChallenge,
+				code_challenge_method: validated.codeChallengeMethod,
+				...(validated.state === undefined ? {} : { state: validated.state }),
+				...(validated.nonce === undefined ? {} : { nonce: validated.nonce }),
+				...(validated.resources.length === 0
+					? {}
+					: { resource: [...validated.resources] }),
+			},
+		};
+	}
+
+	/**
+	 * The consent page's answer, checked against the ticket it was rendered with.
+	 *
+	 * `ticket` is what the session held — pulled, not read, so a second POST
+	 * of the same form finds nothing. `presentedId` is the form's hidden field:
+	 * it must name THIS ticket, which is what stops a form left open in one tab
+	 * from approving the request another tab put in the session since. The
+	 * request is validated again — the client may have lost a scope or a
+	 * redirect URI meanwhile — and no code is minted: that is `grant`'s job,
+	 * once the user said yes.
+	 *
+	 * `null` for anything wrong: no ticket, another ticket, another user,
+	 * expired, or a request that no longer validates. The user starts again.
+	 */
+	async redeemConsentTicket(
+		ticket: unknown,
+		presentedId: unknown,
+		userId: string,
+		now: Date = new Date(),
+	): Promise<ValidatedRequest | null> {
+		const read = readConsentTicket(ticket);
+		if (read === null || typeof presentedId !== "string") return null;
+		if (!hashMatches(sha256(presentedId), sha256(read.id))) return null;
+		if (read.userId !== userId) return null;
+		if (read.expiresAt <= now.getTime()) return null;
+		try {
+			const validated = await validateAuthorizationRequest(
+				read.request,
+				this.#config.store,
+				this.#config,
+			);
+			// An empty `scope` resolves to the client's registered list, which
+			// may have grown since the page was shown: the user agreed to the
+			// list on the page, and to nothing it has become.
+			if (validated.scopes.join(" ") !== (read.request.scope ?? "")) {
+				return null;
+			}
+			return validated;
+		} catch (error) {
+			if (error instanceof UnredirectableError || error instanceof OAuthError) {
+				return null;
+			}
+			throw error;
+		}
 	}
 
 	/** The user said no. */
@@ -424,6 +530,101 @@ function normalizeIssuer(issuer: string): string {
 		);
 	}
 	return issuer.replace(/\/+$/, "");
+}
+
+/**
+ * A ticket as a session store hands it back: untyped, so read field by field.
+ *
+ * A session serialises to JSON and back, and a store an application wrote
+ * itself may hand back anything — a value that is not exactly a ticket is no
+ * ticket.
+ */
+function readConsentTicket(value: unknown): ConsentTicket | null {
+	if (typeof value !== "object" || value === null) return null;
+	if (!("id" in value) || typeof value.id !== "string" || value.id === "")
+		return null;
+	if (!("userId" in value) || typeof value.userId !== "string") return null;
+	if (!("expiresAt" in value) || typeof value.expiresAt !== "number")
+		return null;
+	if (!("request" in value)) return null;
+	const request = readTicketRequest(value.request);
+	if (request === null) return null;
+	return {
+		id: value.id,
+		userId: value.userId,
+		expiresAt: value.expiresAt,
+		request,
+	};
+}
+
+/** `prompt` is left out on purpose: the ticket IS the consent being asked. */
+const TICKET_STRING_FIELDS: readonly Exclude<
+	keyof AuthorizationRequest,
+	"resource" | "prompt"
+>[] = [
+	"response_type",
+	"client_id",
+	"redirect_uri",
+	"scope",
+	"state",
+	"code_challenge",
+	"code_challenge_method",
+	"nonce",
+];
+
+function readTicketRequest(value: unknown): AuthorizationRequest | null {
+	if (typeof value !== "object" || value === null) return null;
+	const request: AuthorizationRequest = {};
+	for (const key of TICKET_STRING_FIELDS) {
+		const field: unknown = Reflect.get(value, key);
+		if (field === undefined) continue;
+		if (typeof field !== "string") return null;
+		request[key] = field;
+	}
+	const resource: unknown = Reflect.get(value, "resource");
+	if (resource !== undefined) {
+		if (
+			!Array.isArray(resource) ||
+			!resource.every((entry) => typeof entry === "string")
+		) {
+			return null;
+		}
+		request.resource = resource;
+	}
+	return request;
+}
+
+/**
+ * Registration that can actually register, checked at boot.
+ *
+ * Both failures would otherwise surface on the first `POST /register`: a store
+ * with nowhere to write a client answers every MCP client a 500, and an empty
+ * initial access token is matched by `Authorization: Bearer ` — an endpoint
+ * the deployment meant to close, open to anyone who sends the header.
+ */
+function assertRegistration(config: VisaConfig): void {
+	const registration = config.registration;
+	if (registration?.enabled !== true) return;
+	if (config.store.saveClient === undefined) throw readOnlyStore();
+	if (registration.initialAccessToken === "") {
+		throw new VisaError(
+			"E_VISA_INVALID_INITIAL_ACCESS_TOKEN",
+			"registration.initialAccessToken is empty, which would accept an empty bearer token.",
+			{
+				hint: "Set a long random value, or leave it out for open registration.",
+			},
+		);
+	}
+}
+
+function readOnlyStore(): VisaError {
+	return new VisaError(
+		"E_VISA_STORE_READ_ONLY",
+		"This store cannot register clients; create them where they live.",
+		{
+			hint: "Implement saveClient(client) on the store — MemoryStore and AtlasStore both do.",
+		},
+	);
 }
 
 /**

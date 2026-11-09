@@ -225,13 +225,53 @@ describe("visa > resource indicators", () => {
 		]);
 	});
 
+	it("narrows only the access token: the next refresh may reach the other resource", async () => {
+		// A client refreshes once per resource it calls. If a token for the
+		// calendar narrowed the refresh token too, the file store would be out
+		// of reach for the rest of the session.
+		const visa = server();
+		const code = await authorized(visa, [CALENDAR, FILES]);
+		const first = await exchange(visa, code);
+
+		const calendar = await visa.token(
+			{
+				grant_type: "refresh_token",
+				refresh_token: first.refresh_token ?? "",
+				resource: CALENDAR,
+			},
+			{ clientId: "app" },
+		);
+		const files = await visa.token(
+			{
+				grant_type: "refresh_token",
+				refresh_token: calendar.refresh_token ?? "",
+				resource: FILES,
+			},
+			{ clientId: "app" },
+		);
+		expect((await visa.verify(files.access_token))?.audience).toEqual([FILES]);
+
+		// No `resource`: the whole binding the user authorized, not the last one.
+		const both = await visa.token(
+			{
+				grant_type: "refresh_token",
+				refresh_token: files.refresh_token ?? "",
+			},
+			{ clientId: "app" },
+		);
+		expect((await visa.verify(both.access_token))?.audience).toEqual([
+			CALENDAR,
+			FILES,
+		]);
+	});
+
 	it("binds a client-credentials token to what it asked for", async () => {
 		// Nobody consented to a list here, so the request is the list — checked
 		// against what this server issues for. A confidential client: a public
 		// one may not use this grant at all.
 		const visa = server([CALENDAR]);
 		const secret = "s3cret";
-		store.addClient({
+		await store.saveClient({
 			id: "machine",
 			name: "Machine",
 			secretHash: hashSecret(secret),

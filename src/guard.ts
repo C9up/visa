@@ -9,7 +9,8 @@
  * upstream rule read off `@adonisjs/auth`'s build rather than recalled.
  *
  * Two things this fixes for every application at once. A route gate no longer
- * has to introspect the token itself — the scopes are on the guard's token. And
+ * has to introspect the token itself — the scopes are on the guard's token,
+ * and only there: `user.permissions` stays the user's own. And
  * the user is fetched through the application's own provider on every request,
  * so an account disabled after the token was issued is refused here instead of
  * in each application that remembers to check.
@@ -410,19 +411,17 @@ export class VisaGuard {
 
 		// A copy: the provider's object is the application's, and a guard that
 		// mutated it would leak one request's token into the next.
+		//
+		// The scopes go on `currentAccessToken` and NOWHERE else — upstream's
+		// access-tokens guard leaves the user model untouched the same way. They
+		// are never merged into `permissions`: a scope is chosen by the client's
+		// registration and granted by consent, which never checks that the user
+		// holds a permission of the same name, so a merge would hand any user a
+		// route permission they lack the moment a scope is named like one
+		// (`orders:write`). And a token limited to `profile` must not carry the
+		// user's other rights to a third-party client either: the two axes meet
+		// only as an intersection, `permission && currentAccessToken.allows(...)`.
 		const user: GuardUser = { ...subject, currentAccessToken: token };
-		if (verified.scopes.length > 0) {
-			// Scopes surface on `permissions` as well, the way warden's access-token
-			// guard does it, so `ctx.auth.user.permissions` reads the same whichever
-			// guard authenticated.
-			//
-			// They remain a SEPARATE axis from the route-level rights gate, exactly
-			// as upstream: a token ability is checked with
-			// `currentAccessToken.allows(...)`, and Bouncer does not consult it.
-			user.permissions = [
-				...new Set([...(subject.permissions ?? []), ...verified.scopes]),
-			];
-		}
 		return { authenticated: true, user };
 	}
 }

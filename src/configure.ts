@@ -25,6 +25,17 @@ import { stubsRoot } from "./stubs.js";
  */
 const MIGRATION_STUB = "database/migrations/9000_create_visa_tables.stub";
 
+/**
+ * Columns added after the tables first shipped, one migration each.
+ *
+ * Written on every run: `makeUsingStub` leaves a file that already exists
+ * alone, so an application that configured an earlier version keeps its 9000
+ * and gains only what it is missing by running `ream configure` again.
+ */
+const UPGRADE_STUBS = [
+	"database/migrations/9001_add_visa_client_secret_expiry.stub",
+];
+
 interface Codemods {
 	addProvider(importPath: string): Promise<void>;
 	addEnvVars(vars: Record<string, string>): Promise<void>;
@@ -45,7 +56,9 @@ export async function configure(codemods: Codemods): Promise<void> {
 	// Fail fast BEFORE touching the project: a pruned tarball or an unreadable
 	// stub must not leave an application with a provider registered, a config
 	// written and no tables to put anything in.
-	await access(resolve(stubsRoot, MIGRATION_STUB), constants.R_OK);
+	for (const stub of [MIGRATION_STUB, ...UPGRADE_STUBS]) {
+		await access(resolve(stubsRoot, stub), constants.R_OK);
+	}
 
 	// The config below reads this, so it is declared here. Writing the file
 	// without it leaves an application whose config asks the environment for
@@ -60,4 +73,7 @@ export async function configure(codemods: Codemods): Promise<void> {
 	// data layer deletes the file and keeps its own store — which is why this
 	// is a migration and not a schema the package owns.
 	await codemods.makeUsingStub(stubsRoot, MIGRATION_STUB);
+	for (const stub of UPGRADE_STUBS) {
+		await codemods.makeUsingStub(stubsRoot, stub);
+	}
 }

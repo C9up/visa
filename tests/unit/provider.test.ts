@@ -20,13 +20,18 @@ interface Recorded {
 	body?: unknown;
 }
 
-function fakeContext(body: Record<string, unknown>, authorization?: string) {
+function fakeContext(
+	body: unknown,
+	authorization?: string,
+	query: Record<string, unknown> = {},
+) {
 	const recorded: Recorded = { headers: {} };
 	const ctx = {
 		request: {
 			header: (name: string) =>
 				name.toLowerCase() === "authorization" ? authorization : undefined,
-			all: () => body,
+			body: () => body,
+			qs: () => ({ ...query }),
 		},
 		response: {
 			status(code: number) {
@@ -191,6 +196,220 @@ describe("visa > provider", () => {
 		expect(recorded.body).toEqual({
 			error: "invalid_client",
 			error_description: "Client authentication failed.",
+		});
+	});
+
+	describe("parameters come from the body, never the URL", () => {
+		// RFC 6749 §2.3.1: client credentials "MUST NOT be included in the
+		// request URI". A URL is kept by access logs, proxies and traces where a
+		// body is not.
+		async function machineClient() {
+			const store = new MemoryStore();
+			const { routes, manager } = await started(store, {
+				registration: { enabled: true },
+			});
+			const { secret } = await manager.registerClient({
+				id: "svc",
+				name: "Service",
+				redirectUris: [REDIRECT],
+				scopes: ["reports"],
+				grantTypes: ["client_credentials"],
+				tokenEndpointAuthMethod: "client_secret_post",
+			});
+			const credentials = {
+				grant_type: "client_credentials",
+				client_id: "svc",
+				client_secret: secret ?? "",
+			};
+			return { routes, credentials };
+		}
+
+		function route(
+			routes: Map<string, (ctx: unknown) => Promise<void>>,
+			key: string,
+		) {
+			const handler = routes.get(key);
+			if (!handler) throw new Error(`no route ${key}`);
+			return handler;
+		}
+
+		it("issues a token for credentials in the body", async () => {
+			const { routes, credentials } = await machineClient();
+			const { ctx, recorded } = fakeContext(credentials);
+
+			await route(routes, "POST /oauth/token")(ctx);
+
+			expect(recorded.status).toBeUndefined();
+			expect(recorded.body).toMatchObject({ token_type: "Bearer" });
+		});
+
+		it("refuses the same credentials in the query string", async () => {
+			const { routes, credentials } = await machineClient();
+			const { ctx, recorded } = fakeContext(undefined, undefined, credentials);
+
+			await route(routes, "POST /oauth/token")(ctx);
+
+			expect(recorded.status).toBe(400);
+			expect(recorded.body).toMatchObject({ error: "invalid_request" });
+		});
+
+		it("refuses a body that a query string would override", async () => {
+			const { routes, credentials } = await machineClient();
+			const { ctx, recorded } = fakeContext(credentials, undefined, {
+				grant_type: "refresh_token",
+			});
+
+			await route(routes, "POST /oauth/token")(ctx);
+
+			expect(recorded.status).toBe(400);
+			expect(recorded.body).toMatchObject({ error: "invalid_request" });
+		});
+
+		it("refuses a query string on introspection, revocation and registration", async () => {
+			const { routes, credentials } = await machineClient();
+			for (const key of [
+				"POST /oauth/introspect",
+				"POST /oauth/revoke",
+				"POST /oauth/register",
+			]) {
+				const { ctx, recorded } = fakeContext(
+					key === "POST /oauth/register"
+						? { redirect_uris: [REDIRECT] }
+						: { token: "anything" },
+					undefined,
+					{ client_id: credentials.client_id },
+				);
+
+				await route(routes, key)(ctx);
+
+				expect(recorded.status, key).toBe(400);
+				expect(recorded.body, key).toMatchObject({ error: "invalid_request" });
+			}
+		});
+
+		it("ignores a query parameter that is not an OAuth one", async () => {
+			// A tracing or cache-busting parameter a proxy added carries no
+			// credential: refusing it would break the request for nothing.
+			const { routes, credentials } = await machineClient();
+			const { ctx, recorded } = fakeContext(credentials, undefined, {
+				trace: "abc",
+				_: "1700000000",
+			});
+
+			await route(routes, "POST /oauth/token")(ctx);
+
+			expect(recorded.status).toBeUndefined();
+			expect(recorded.body).toMatchObject({ token_type: "Bearer" });
+		});
+
+		it("refuses every OAuth parameter in the query, on every endpoint", async () => {
+			const { routes, credentials } = await machineClient();
+			const parameters = [
+				"client_id",
+				"client_secret",
+				"client_assertion",
+				"client_assertion_type",
+				"grant_type",
+				"code",
+				"code_verifier",
+				"redirect_uri",
+				"refresh_token",
+				"scope",
+				"resource",
+				"token",
+				"token_type_hint",
+				"access_token",
+				"username",
+				"password",
+			];
+			for (const key of [
+				"POST /oauth/token",
+				"POST /oauth/introspect",
+				"POST /oauth/revoke",
+				"POST /oauth/register",
+			]) {
+				for (const parameter of parameters) {
+					const { ctx, recorded } = fakeContext(
+						key === "POST /oauth/register"
+							? { redirect_uris: [REDIRECT] }
+							: credentials,
+						undefined,
+						{ [parameter]: "x" },
+					);
+
+					await route(routes, key)(ctx);
+
+					expect(recorded.status, `${key} ?${parameter}`).toBe(400);
+					expect(recorded.body, `${key} ?${parameter}`).toMatchObject({
+						error: "invalid_request",
+					});
+				}
+			}
+		});
+
+		it("refuses client metadata in the query of a registration", async () => {
+			const { routes } = await machineClient();
+			for (const parameter of [
+				"redirect_uris",
+				"token_endpoint_auth_method",
+				"grant_types",
+				"response_types",
+				"client_name",
+				"client_uri",
+				"logo_uri",
+				"contacts",
+				"tos_uri",
+				"policy_uri",
+				"jwks_uri",
+				"jwks",
+				"software_id",
+				"software_version",
+				"software_statement",
+			]) {
+				const { ctx, recorded } = fakeContext(
+					{ redirect_uris: [REDIRECT] },
+					undefined,
+					{ [parameter]: "x" },
+				);
+
+				await route(routes, "POST /oauth/register")(ctx);
+
+				expect(recorded.status, parameter).toBe(400);
+				expect(recorded.body, parameter).toMatchObject({
+					error: "invalid_request",
+				});
+			}
+
+			const { ctx, recorded } = fakeContext(
+				{ redirect_uris: [REDIRECT] },
+				undefined,
+				{ trace: "abc" },
+			);
+			await route(routes, "POST /oauth/register")(ctx);
+			expect(recorded.status).toBe(201);
+		});
+
+		it("ignores registration metadata in the query of the token endpoint", async () => {
+			// Registration metadata is only an OAuth parameter on /register: on
+			// the token endpoint it means nothing and is ignored.
+			const { routes, credentials } = await machineClient();
+			const { ctx, recorded } = fakeContext(credentials, undefined, {
+				client_name: "x",
+			});
+
+			await route(routes, "POST /oauth/token")(ctx);
+
+			expect(recorded.body).toMatchObject({ token_type: "Bearer" });
+		});
+
+		it("refuses a body that is not an object", async () => {
+			const { routes } = await machineClient();
+			const { ctx, recorded } = fakeContext(["grant_type"]);
+
+			await route(routes, "POST /oauth/token")(ctx);
+
+			expect(recorded.status).toBe(400);
+			expect(recorded.body).toMatchObject({ error: "invalid_request" });
 		});
 	});
 
