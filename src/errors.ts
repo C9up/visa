@@ -79,6 +79,26 @@ export class OAuthError extends Error {
 	}
 }
 
+/**
+ * A token that does not carry the ability asked of it — what
+ * `currentAccessToken.authorize()` throws.
+ *
+ * The upstream id `E_UNAUTHORIZED_ACCESS` verbatim rather than an
+ * `E_VISA_*` code, so a handler that already maps it keeps working whichever
+ * guard authenticated the request. 403, not 401: the request is
+ * authenticated, the token is merely too narrow (RFC 6750 §3.1,
+ * `insufficient_scope`).
+ */
+export class UnauthorizedAccessError extends Error {
+	readonly code = "E_UNAUTHORIZED_ACCESS";
+	readonly status = 403;
+
+	constructor(message: string) {
+		super(message);
+		this.name = "UnauthorizedAccessError";
+	}
+}
+
 /** A mistake in the application, addressed to whoever wired it. */
 export class VisaError extends Error {
 	readonly code: string;

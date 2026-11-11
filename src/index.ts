@@ -38,6 +38,7 @@ export {
 	type ProtocolErrorCode,
 	type RegistrationErrorCode,
 	type TokenErrorCode,
+	UnauthorizedAccessError,
 	VisaError,
 } from "./errors.js";
 export {

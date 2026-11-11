@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { hashSecret } from "../../src/crypto.js";
+import { UnauthorizedAccessError } from "../../src/errors.js";
 import { type GuardStore, type GuardUser, visaGuard } from "../../src/guard.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 
@@ -181,14 +182,21 @@ describe("visa > the guard", () => {
 		const token = (await guard().verify(secret)).user?.currentAccessToken;
 
 		expect(() => token?.authorize("contacts.read")).not.toThrow();
-		let code: unknown;
+		let thrown: unknown;
 		try {
 			token?.authorize("contacts.write");
 			expect.unreachable("authorize() should have thrown");
 		} catch (error) {
-			code = error instanceof Error ? Reflect.get(error, "code") : undefined;
+			thrown = error;
 		}
-		expect(code).toBe("E_UNAUTHORIZED_ACCESS");
+		// A class an exception handler can match with `instanceof`, carrying
+		// the upstream id and the status a missing scope answers with.
+		expect(thrown).toBeInstanceOf(UnauthorizedAccessError);
+		expect(thrown).toMatchObject({
+			code: "E_UNAUTHORIZED_ACCESS",
+			status: 403,
+			message: 'Access denied: the token does not carry "contacts.write"',
+		});
 	});
 
 	it("never turns a scope into a permission the user does not hold", async () => {

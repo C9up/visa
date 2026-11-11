@@ -21,6 +21,7 @@
  */
 
 import { hashSecret, randomToken } from "./crypto.js";
+import { UnauthorizedAccessError } from "./errors.js";
 import { verifyAccessToken } from "./introspect.js";
 import { wwwAuthenticate } from "./protectedResource.js";
 import type { VisaStore } from "./store.js";
@@ -138,12 +139,9 @@ export class VisaAccessToken {
 	 */
 	authorize(ability: string): void {
 		if (this.allows(ability)) return;
-		const error = new Error(
+		throw new UnauthorizedAccessError(
 			`Access denied: the token does not carry "${ability}"`,
-		) as Error & { code: string; status: number };
-		error.code = "E_UNAUTHORIZED_ACCESS";
-		error.status = 403;
-		throw error;
+		);
 	}
 
 	/** A token with no expiry never expires. */

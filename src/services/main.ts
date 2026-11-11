@@ -46,12 +46,17 @@ function resolve(): VisaManager {
  * Symbols and `then` answer undefined: a module namespace is probed for `then`
  * when it is imported, and a proxy that threw there would crash the import.
  */
-const visa = new Proxy({} as VisaManager, {
+// The target is never read through — every trap forwards to the seated
+// manager — so a bare object stands in for one, typed as what it fronts.
+const target: VisaManager = Object.create(null);
+
+const visa: VisaManager = new Proxy(target, {
 	get(_target, property) {
 		if (typeof property === "symbol" || property === "then") return undefined;
-		const value = Reflect.get(resolve(), property);
-		return typeof value === "function" ? value.bind(resolve()) : value;
+		const manager = resolve();
+		const value = Reflect.get(manager, property, manager);
+		return typeof value === "function" ? value.bind(manager) : value;
 	},
-}) as VisaManager;
+});
 
 export default visa;
