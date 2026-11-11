@@ -125,6 +125,7 @@ describe("visa > configure", () => {
 		expect(migrations).toEqual([
 			"database/migrations/9000_create_visa_tables.ts",
 			"database/migrations/9001_add_visa_client_secret_expiry.ts",
+			"database/migrations/9002_add_visa_code_redirect_uri_omitted.ts",
 		]);
 		const upgrade = calls.files.find((file) =>
 			file.path.endsWith("9001_add_visa_client_secret_expiry.ts"),
@@ -134,6 +135,12 @@ describe("visa > configure", () => {
 			't.timestamp("secret_expires_at").nullable()',
 		);
 		expect(upgrade?.content).toContain('t.dropColumn("secret_expires_at")');
+		const codeColumn = calls.files.find((file) =>
+			file.path.endsWith("9002_add_visa_code_redirect_uri_omitted.ts"),
+		);
+		expect(codeColumn?.content).toContain(
+			't.boolean("redirect_uri_omitted").notNullable().defaultTo(false)',
+		);
 		// Declared once: 9000 creating it too would make 9001 fail on a fresh app.
 		const create = calls.files.find((file) =>
 			file.path.endsWith("9000_create_visa_tables.ts"),

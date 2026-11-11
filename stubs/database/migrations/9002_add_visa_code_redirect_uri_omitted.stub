@@ -1,0 +1,29 @@
+---
+to: database/migrations/9002_add_visa_code_redirect_uri_omitted.ts
+---
+import { Migration } from "@c9up/atlas";
+
+/**
+ * Whether an authorization request named its `redirect_uri` (RFC 6749 §4.1.3).
+ *
+ * The token endpoint requires the parameter only when the authorization
+ * request carried it. A client with a single registered URI may omit it in
+ * both requests, and the exchange can only tell the two cases apart if the
+ * code remembers which one it was issued in.
+ *
+ * False by default: false is the reading that demands the parameter, so a code
+ * issued before this column existed is still refused without it.
+ */
+export default class AddVisaCodeRedirectUriOmitted extends Migration {
+	async up() {
+		this.schema.alterTable("visa_authorization_codes", (t) => {
+			t.boolean("redirect_uri_omitted").notNullable().defaultTo(false);
+		});
+	}
+
+	async down() {
+		this.schema.alterTable("visa_authorization_codes", (t) => {
+			t.dropColumn("redirect_uri_omitted");
+		});
+	}
+}

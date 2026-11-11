@@ -44,6 +44,8 @@ export interface AuthorizationRequest {
 export interface ValidatedRequest {
 	client: Client;
 	redirectUri: string;
+	/** Whether the request named `redirect_uri` itself (RFC 6749 §4.1.3). */
+	redirectUriProvided: boolean;
 	scopes: string[];
 	state: string | undefined;
 	codeChallenge: string;
@@ -146,6 +148,8 @@ export async function validateAuthorizationRequest(
 	return {
 		client,
 		redirectUri,
+		redirectUriProvided:
+			request.redirect_uri !== undefined && request.redirect_uri !== "",
 		scopes,
 		state: request.state,
 		codeChallenge,
@@ -234,6 +238,7 @@ export async function issueAuthorizationCode(
 		clientId: validated.client.id,
 		userId,
 		redirectUri: validated.redirectUri,
+		...(validated.redirectUriProvided ? {} : { redirectUriOmitted: true }),
 		scopes: validated.scopes,
 		codeChallenge: validated.codeChallenge,
 		codeChallengeMethod: validated.codeChallengeMethod,

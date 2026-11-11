@@ -34,6 +34,7 @@ const MIGRATION_STUB = "database/migrations/9000_create_visa_tables.stub";
  */
 const UPGRADE_STUBS = [
 	"database/migrations/9001_add_visa_client_secret_expiry.stub",
+	"database/migrations/9002_add_visa_code_redirect_uri_omitted.stub",
 ];
 
 interface Codemods {

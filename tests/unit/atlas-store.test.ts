@@ -224,6 +224,43 @@ describe("visa > the atlas store", () => {
 		});
 	});
 
+	it("remembers that an authorization request omitted redirect_uri", async () => {
+		// The token endpoint relaxes its redirect_uri check on that flag alone
+		// (RFC 6749 §4.1.3), so it has to survive the round trip — and a row
+		// whose column holds anything but true must read as "it was included".
+		const base = {
+			clientId: "app-1",
+			userId: "user-7",
+			redirectUri: "https://app.example/cb",
+			scopes: ["profile"],
+			codeChallenge: "challenge",
+			codeChallengeMethod: "S256" as const,
+			expiresAt: new Date(Date.now() + 30_000),
+		};
+		await store.saveAuthorizationCode({
+			...base,
+			codeHash: "omitted",
+			redirectUriOmitted: true,
+		});
+		await store.saveAuthorizationCode({ ...base, codeHash: "included" });
+
+		expect(
+			(await store.findAuthorizationCode("omitted"))?.redirectUriOmitted,
+		).toBe(true);
+		expect(await store.findAuthorizationCode("included")).not.toHaveProperty(
+			"redirectUriOmitted",
+		);
+
+		const row = db
+			.rows("visa_authorization_codes")
+			.find((candidate) => candidate.code_hash === "omitted");
+		if (row === undefined) throw new Error("expected the row");
+		row.redirect_uri_omitted = null;
+		expect(await store.findAuthorizationCode("omitted")).not.toHaveProperty(
+			"redirectUriOmitted",
+		);
+	});
+
 	it("lets exactly one racing exchange consume a code", async () => {
 		// The single-use guarantee. Both callers reach the database; only the one
 		// whose UPDATE found the row still unconsumed may proceed.

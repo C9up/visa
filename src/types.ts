@@ -60,6 +60,17 @@ export interface AuthorizationCode {
 	clientId: string;
 	userId: string;
 	redirectUri: string;
+	/**
+	 * Set when the authorization request carried no `redirect_uri` and the
+	 * client's single registered URI was used.
+	 *
+	 * RFC 6749 §4.1.3 (and OAuth 2.1 §4.1.3) require the parameter at the
+	 * token endpoint only when it was in the authorization request, so the
+	 * exchange has to know which it was. Absent means it was included — the
+	 * reading that demands it, so a record written before this field existed
+	 * fails closed.
+	 */
+	redirectUriOmitted?: true;
 	scopes: string[];
 	codeChallenge: string;
 	codeChallengeMethod: "S256" | "plain";

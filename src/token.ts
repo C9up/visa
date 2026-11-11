@@ -126,9 +126,15 @@ async function exchangeCode(
 	}
 
 	const redirectUri = asString(request.redirect_uri);
-	// Required whenever it was in the authorization request, which this server
-	// always records.
-	if (redirectUri !== record.redirectUri) throw invalid;
+	// RFC 6749 §4.1.3 / OAuth 2.1 §4.1.3: REQUIRED if it was included in the
+	// authorization request, and then identical to it. A request that omitted
+	// it landed on the client's single registered URI, so the exchange may
+	// omit it too — and one that sends it anyway is still compared.
+	if (redirectUri === undefined) {
+		if (record.redirectUriOmitted !== true) throw invalid;
+	} else if (redirectUri !== record.redirectUri) {
+		throw invalid;
+	}
 
 	if (
 		!verifierMatches(verifier, record.codeChallenge, record.codeChallengeMethod)

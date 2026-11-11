@@ -12,7 +12,14 @@ import { describe, expect, it } from "vitest";
 import { hashSecret } from "../../src/crypto.js";
 import { OAuthError } from "../../src/errors.js";
 import type { TokenResponse } from "../../src/types.js";
-import { authorizeToCode, basic, harness, pkce, REDIRECT } from "./helpers.js";
+import {
+	authorizeToCode,
+	basic,
+	codeFrom,
+	harness,
+	pkce,
+	REDIRECT,
+} from "./helpers.js";
 
 async function exchange(
 	h: Awaited<ReturnType<typeof harness>>,
@@ -139,6 +146,76 @@ describe("visa > token > the authorization code grant", () => {
 				grant_type: "authorization_code",
 				code,
 				redirect_uri: "https://app.example.test/other",
+				code_verifier: verifier,
+			}),
+		).rejects.toMatchObject({ code: "invalid_grant" });
+	});
+
+	it("exchanges a code without redirect_uri when the authorization request had none", async () => {
+		// RFC 6749 §4.1.3 / OAuth 2.1 §4.1.3: redirect_uri is required at the
+		// token endpoint only "if the redirect_uri parameter was included in the
+		// authorization request". A client with one registered URI may omit it
+		// in both requests.
+		const h = await harness();
+		const { verifier, challenge } = pkce();
+		const outcome = await h.visa.authorize(
+			{
+				response_type: "code",
+				client_id: h.client.id,
+				code_challenge: challenge,
+				code_challenge_method: "S256",
+			},
+			"user-1",
+		);
+		if (outcome.type !== "consent") throw new Error("expected consent");
+		const code = codeFrom(await h.visa.grant(outcome.request, "user-1"));
+
+		const response = await exchange(h, {
+			grant_type: "authorization_code",
+			code,
+			code_verifier: verifier,
+		});
+		expect(response.access_token).toBeTypeOf("string");
+	});
+
+	it("still compares redirect_uri when a client that omitted it sends one", async () => {
+		const h = await harness({
+			redirectUris: [REDIRECT],
+		});
+		const { verifier, challenge } = pkce();
+		const outcome = await h.visa.authorize(
+			{
+				response_type: "code",
+				client_id: h.client.id,
+				code_challenge: challenge,
+				code_challenge_method: "S256",
+			},
+			"user-1",
+		);
+		if (outcome.type !== "consent") throw new Error("expected consent");
+		const code = codeFrom(await h.visa.grant(outcome.request, "user-1"));
+
+		await expect(
+			exchange(h, {
+				grant_type: "authorization_code",
+				code,
+				redirect_uri: "https://app.example.test/other",
+				code_verifier: verifier,
+			}),
+		).rejects.toMatchObject({ code: "invalid_grant" });
+	});
+
+	it("refuses an exchange without redirect_uri when the authorization request carried it", async () => {
+		// The other half of §4.1.3: included at authorization, it is REQUIRED
+		// at the token endpoint.
+		const h = await harness();
+		const { verifier, challenge } = pkce();
+		const code = await authorizeToCode(h, { challenge });
+
+		await expect(
+			exchange(h, {
+				grant_type: "authorization_code",
+				code,
 				code_verifier: verifier,
 			}),
 		).rejects.toMatchObject({ code: "invalid_grant" });

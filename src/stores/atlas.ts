@@ -206,6 +206,7 @@ export class AtlasStore implements VisaStore {
 			client_id: code.clientId,
 			user_id: code.userId,
 			redirect_uri: code.redirectUri,
+			redirect_uri_omitted: code.redirectUriOmitted === true,
 			scopes: encodeList(code.scopes),
 			code_challenge: code.codeChallenge,
 			code_challenge_method: code.codeChallengeMethod,
@@ -232,6 +233,11 @@ export class AtlasStore implements VisaStore {
 			clientId: requireString(row.client_id, "client_id"),
 			userId: requireString(row.user_id, "user_id"),
 			redirectUri: requireString(row.redirect_uri, "redirect_uri"),
+			// Only an explicit true relaxes the token endpoint's check: a NULL
+			// or anything unexpected reads as "it was included", which demands it.
+			...(row.redirect_uri_omitted === true || row.redirect_uri_omitted === 1
+				? { redirectUriOmitted: true }
+				: {}),
 			scopes: decodeList(row.scopes, "scopes"),
 			codeChallenge: requireString(row.code_challenge, "code_challenge"),
 			codeChallengeMethod:

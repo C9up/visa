@@ -217,6 +217,11 @@ before upgrading: your existing `9000_create_visa_tables` is left alone and
 `9001_add_visa_client_secret_expiry` lands beside it; `migration:run` adds the
 column.
 
+The same goes for `visa_authorization_codes.redirect_uri_omitted`
+(`9002_add_visa_code_redirect_uri_omitted`): it records whether an
+authorization request named its `redirect_uri`, because the token endpoint
+requires the parameter only when it did (RFC 6749 §4.1.3).
+
 ## What is not here yet
 
 OpenID Connect — `id_token`, discovery, JWKS, `/userinfo`. The `nonce` is
