@@ -197,6 +197,42 @@ describe("visa > the atlas store", () => {
 		expect(client?.tokenEndpointAuthMethod).toBe("none");
 	});
 
+	it("refuses a client whose auth method column holds an unknown value", async () => {
+		// Read as `none`, a confidential client whose column was renamed by a
+		// migration, hand-edited or left NULL becomes a public one: anyone
+		// holding its client_id redeems its codes without the secret.
+		const visa = new VisaManager({ issuer: "https://auth.example", store });
+		await visa.registerClient({
+			id: "conf",
+			name: "Confidential",
+			redirectUris: ["https://app.example/cb"],
+			grantTypes: ["authorization_code"],
+			tokenEndpointAuthMethod: "client_secret_basic",
+		});
+		const row = db.rows("visa_clients").find((r) => r.id === "conf");
+		if (row === undefined) throw new Error("expected the client row");
+
+		for (const value of ["client_secret_jwt", null, "", "NONE"]) {
+			row.token_endpoint_auth_method = value;
+			await expect(store.findClient("conf"), String(value)).rejects.toThrow(
+				"[visa] token_endpoint_auth_method is not one of",
+			);
+			// And the token endpoint stops there instead of authenticating it as
+			// public and going on to look the code up.
+			await expect(
+				visa.token(
+					{ grant_type: "authorization_code", code: "c" },
+					{ clientId: "conf" },
+				),
+			).rejects.toThrow("[visa] token_endpoint_auth_method");
+		}
+
+		row.token_endpoint_auth_method = "none";
+		expect((await store.findClient("conf"))?.tokenEndpointAuthMethod).toBe(
+			"none",
+		);
+	});
+
 	it("round-trips an authorization code", async () => {
 		const expiresAt = new Date(Date.now() + 30_000);
 		await store.saveAuthorizationCode({

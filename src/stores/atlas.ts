@@ -515,11 +515,24 @@ function isGrantType(value: string): value is GrantType {
 	);
 }
 
+/**
+ * The client's authentication method, or a thrown error.
+ *
+ * Never a default. `none` is not the least-privileged reading of a column
+ * that holds something unexpected — it is the one that needs no secret, so a
+ * confidential client whose method was renamed by a migration, edited by hand
+ * or left NULL would redeem its codes for anyone holding its client_id. The
+ * same rule as every other column reader here: malformed fails loudly.
+ */
 function readAuthMethod(value: unknown): ClientAuthMethod {
-	if (value === "client_secret_basic" || value === "client_secret_post") {
+	if (
+		value === "client_secret_basic" ||
+		value === "client_secret_post" ||
+		value === "none"
+	) {
 		return value;
 	}
-	// A row holding nothing usable is read as a public client, which is the
-	// method that grants the least.
-	return "none";
+	throw new Error(
+		`[visa] token_endpoint_auth_method is not one of client_secret_basic, client_secret_post, none: ${String(value)}`,
+	);
 }
