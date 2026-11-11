@@ -278,7 +278,7 @@ describe("visa > token > the authorization code grant", () => {
 					grant_type: "authorization_code",
 					code,
 					redirect_uri: REDIRECT,
-					code_verifier: "v",
+					code_verifier: pkce().verifier,
 				});
 			} catch (error) {
 				failures.push(error instanceof OAuthError ? error.message : "other");
@@ -286,6 +286,57 @@ describe("visa > token > the authorization code grant", () => {
 		}
 		// The empty one fails on a missing parameter, which is not a secret.
 		expect(failures[0]).toBe("invalid_grant: The code is not valid.");
+	});
+});
+
+describe("visa > token > the PKCE verifier format (RFC 7636 §4.1)", () => {
+	it("refuses a verifier outside 43-128 unreserved characters, even one that matches", async () => {
+		// A `plain` code whose challenge predates the format check: the verifier
+		// "a" matches it byte for byte, and must still not buy a token.
+		const h = await harness({}, { allowPlainChallenge: true });
+		await h.store.saveAuthorizationCode({
+			codeHash: hashSecret("short-code"),
+			clientId: h.client.id,
+			userId: "user-1",
+			redirectUri: REDIRECT,
+			scopes: ["profile"],
+			codeChallenge: "a",
+			codeChallengeMethod: "plain",
+			expiresAt: new Date(Date.now() + 30_000),
+		});
+
+		await expect(
+			exchange(h, {
+				grant_type: "authorization_code",
+				code: "short-code",
+				redirect_uri: REDIRECT,
+				code_verifier: "a",
+			}),
+		).rejects.toMatchObject({ code: "invalid_request" });
+	});
+
+	it("refuses a verifier that is too long or carries a character outside the set", async () => {
+		const h = await harness();
+		const { verifier, challenge } = pkce();
+		const code = await authorizeToCode(h, { challenge });
+		for (const bad of ["a".repeat(129), `${verifier.slice(0, 42)}/`]) {
+			await expect(
+				exchange(h, {
+					grant_type: "authorization_code",
+					code,
+					redirect_uri: REDIRECT,
+					code_verifier: bad,
+				}),
+			).rejects.toMatchObject({ code: "invalid_request" });
+		}
+		// The code was never consumed by the malformed attempts.
+		const response = await exchange(h, {
+			grant_type: "authorization_code",
+			code,
+			redirect_uri: REDIRECT,
+			code_verifier: verifier,
+		});
+		expect(response.access_token).toBeTypeOf("string");
 	});
 });
 

@@ -99,7 +99,7 @@ describe("visa > authorize > PKCE", () => {
 			response_type: "code" as const,
 			client_id: h.client.id,
 			redirect_uri: REDIRECT,
-			code_challenge: "a-verifier",
+			code_challenge: "a-verifier-of-the-length-rfc-7636-asks-for-0123",
 			code_challenge_method: "plain",
 		};
 		const refused = await h.visa.authorize(request, "user-1");
@@ -114,6 +114,57 @@ describe("visa > authorize > PKCE", () => {
 			"user-1",
 		);
 		expect(allowed.type).not.toBe("error");
+	});
+
+	it("refuses a challenge that is not 43-128 unreserved characters (RFC 7636 §4.2)", async () => {
+		// With `plain` the challenge IS the verifier: a one-character one is a
+		// verifier anyone can guess, and the interception protection is gone.
+		const lenient = await harness({}, { allowPlainChallenge: true });
+		const malformed = [
+			["plain", "a"],
+			["plain", "a".repeat(42)],
+			["plain", "a".repeat(129)],
+			["S256", "a"],
+			// `+`, `/` and `=` are base64, not base64url: outside the set.
+			["S256", `${"a".repeat(42)}+`],
+			["S256", `${"a".repeat(42)}=`],
+			["plain", `${"a".repeat(42)} `],
+		];
+		for (const [method, challenge] of malformed) {
+			const outcome = await lenient.visa.authorize(
+				{
+					response_type: "code",
+					client_id: lenient.client.id,
+					redirect_uri: REDIRECT,
+					code_challenge: challenge,
+					code_challenge_method: method,
+				},
+				"user-1",
+			);
+			if (outcome.type !== "redirect") {
+				throw new Error(`expected a redirect for ${method} ${challenge}`);
+			}
+			expect(new URL(outcome.url).searchParams.get("error"), challenge).toBe(
+				"invalid_request",
+			);
+		}
+	});
+
+	it("accepts a challenge at both ends of the length range", async () => {
+		const lenient = await harness({}, { allowPlainChallenge: true });
+		for (const challenge of ["A-._~".padEnd(43, "z"), "9".repeat(128)]) {
+			const outcome = await lenient.visa.authorize(
+				{
+					response_type: "code",
+					client_id: lenient.client.id,
+					redirect_uri: REDIRECT,
+					code_challenge: challenge,
+					code_challenge_method: "plain",
+				},
+				"user-1",
+			);
+			expect(outcome.type, challenge).toBe("consent");
+		}
 	});
 
 	it("refuses a method it does not know", async () => {

@@ -195,6 +195,21 @@ function resolveRedirectUri(
 	return requested;
 }
 
+/**
+ * The one shape RFC 7636 allows for both a verifier (§4.1) and a challenge
+ * (§4.2): 43 to 128 characters of the unreserved set.
+ *
+ * Checked on both sides, because with `plain` the challenge IS the verifier:
+ * a short one is a verifier anyone can guess, and the interception protection
+ * PKCE exists for is gone. An S256 challenge is 43 base64url characters, which
+ * this admits.
+ */
+const PKCE_VALUE = /^[A-Za-z0-9._~-]{43,128}$/;
+
+export function isPkceValue(value: string): boolean {
+	return PKCE_VALUE.test(value);
+}
+
 function readChallenge(
 	request: AuthorizationRequest,
 	options: AuthorizeOptions,
@@ -203,6 +218,12 @@ function readChallenge(
 	if (challenge === undefined || challenge === "") {
 		// Mandatory in 2.1 for every client, confidential ones included.
 		throw new OAuthError("invalid_request", "code_challenge is required.");
+	}
+	if (!isPkceValue(challenge)) {
+		throw new OAuthError(
+			"invalid_request",
+			"code_challenge must be 43 to 128 unreserved characters (RFC 7636 §4.2).",
+		);
 	}
 	const method = request.code_challenge_method ?? "plain";
 	if (method === "S256")

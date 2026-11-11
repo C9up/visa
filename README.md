@@ -31,6 +31,9 @@ consent screen, and both belong to your application. See below.
 - **`S256` only.** `plain` puts the verifier in the authorization request, so
   anything that can read that request can complete the exchange, which is what
   PKCE exists to stop. `allowPlainChallenge: true` brings it back; don't.
+- **The PKCE format is enforced.** A `code_challenge` and a `code_verifier`
+  are 43 to 128 characters of `[A-Za-z0-9._~-]` (RFC 7636 §4.1-4.2); anything
+  else is refused with `invalid_request` at the endpoint that receives it.
 - **Exact redirect URI matching**, with the one exception the spec names (a
   loopback port). A prefix match is how an open redirect on the client's own
   domain becomes a stolen code.

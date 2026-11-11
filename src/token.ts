@@ -6,6 +6,7 @@
  * hold one, and an application that needs them needs a different design.
  */
 
+import { isPkceValue } from "./authorize.js";
 import {
 	assertGrantAllowed,
 	authenticateClient,
@@ -108,6 +109,15 @@ async function exchangeCode(
 	}
 	if (verifier === undefined) {
 		throw new OAuthError("invalid_request", "code_verifier is required.");
+	}
+	// Before the code is looked up: a malformed verifier is a malformed
+	// request, and it must not reach the comparison — a `plain` challenge
+	// stored before the format was enforced would otherwise still match it.
+	if (!isPkceValue(verifier)) {
+		throw new OAuthError(
+			"invalid_request",
+			"code_verifier must be 43 to 128 unreserved characters (RFC 7636 §4.1).",
+		);
 	}
 
 	const record = await store.findAuthorizationCode(hashSecret(code));
