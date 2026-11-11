@@ -24,6 +24,23 @@ ream configure @c9up/visa
 `/authorize` is **not** mounted, deliberately: it needs a signed-in user and a
 consent screen, and both belong to your application. See below.
 
+### The body parser must run on these routes
+
+`/oauth/token`, `/oauth/revoke` and `/oauth/introspect` read their parameters
+from an `application/x-www-form-urlencoded` POST body (RFC 6749 §3.2, RFC 7009
+§2.1, RFC 7662 §2.1), and `/oauth/register` from a JSON one (RFC 7591 §3.1).
+Ream hands a route a parsed body only when its body parser ran, so keep it in
+the router middleware stack of `start/kernel.ts`, which every route — the ones
+visa mounts included — passes through:
+
+```ts
+router.use([() => import('@c9up/ream/bodyparser_middleware')])
+```
+
+Its defaults already parse both media types. Without it every request arrives
+with no parameters, and the token endpoint answers each one
+`invalid_request: grant_type is required.`
+
 ## Security decisions, and why
 
 - **PKCE on every client**, confidential ones included — a code on the front

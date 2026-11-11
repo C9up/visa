@@ -7,6 +7,8 @@
  * is deliberately NOT mounted.
  */
 
+import { HttpContext } from "@c9up/ream";
+import BodyParserMiddleware from "@c9up/ream/bodyparser_middleware";
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "../../src/stores/memory.js";
 import { VisaManager } from "../../src/VisaManager.js";
@@ -49,6 +51,25 @@ function fakeContext(
 		},
 	};
 	return { ctx, recorded };
+}
+
+/** A real framework context carrying one form-encoded POST to the token endpoint. */
+function formContext(body: string): HttpContext {
+	return new HttpContext(
+		"visa-test",
+		{
+			method: "POST",
+			path: "/oauth/token",
+			query: "",
+			headers: {
+				"content-type": "application/x-www-form-urlencoded",
+				"content-length": String(Buffer.byteLength(body, "utf8")),
+			},
+			body,
+		},
+		{},
+		{ pattern: "/oauth/token", middleware: [] },
+	);
 }
 
 function buildApp(
@@ -241,6 +262,40 @@ describe("visa > provider", () => {
 
 			expect(recorded.status).toBeUndefined();
 			expect(recorded.body).toMatchObject({ token_type: "Bearer" });
+		});
+
+		it("reads a form body through the framework's body parser", async () => {
+			// RFC 6749 §3.2: the token request is a POST with an
+			// application/x-www-form-urlencoded body. The framework hands the
+			// endpoint a parsed body only when its body parser ran, so this is
+			// the setup the README documents, run with the real request and
+			// middleware rather than a stub of either.
+			const { routes, credentials } = await machineClient();
+			const ctx = formContext(new URLSearchParams(credentials).toString());
+
+			await new BodyParserMiddleware().handle(ctx, () =>
+				route(routes, "POST /oauth/token")(ctx),
+			);
+
+			expect(ctx.response.getStatus()).toBe(200);
+			expect(JSON.parse(ctx.response.getBody())).toMatchObject({
+				token_type: "Bearer",
+			});
+		});
+
+		it("finds no parameters when the body parser did not run", async () => {
+			// The same request with the parser left out of the middleware stack:
+			// the framework hands over no parameters, and the endpoint can only
+			// answer that grant_type is missing. Hence the README's requirement.
+			const { routes, credentials } = await machineClient();
+			const ctx = formContext(new URLSearchParams(credentials).toString());
+
+			await route(routes, "POST /oauth/token")(ctx);
+
+			expect(ctx.response.getStatus()).toBe(400);
+			expect(JSON.parse(ctx.response.getBody())).toMatchObject({
+				error: "invalid_request",
+			});
 		});
 
 		it("refuses the same credentials in the query string", async () => {
