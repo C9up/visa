@@ -9,11 +9,10 @@ import { Migration } from "@c9up/atlas";
  * Every credential column holds a HASH, never the value that was handed out —
  * a dump of these tables is not a set of working tokens.
  *
- * Two portability rules are followed deliberately and should survive an edit:
+ * Two rules are followed deliberately and should survive an edit:
  *
- * No `t.timestamps()`. It emits `DEFAULT (NOW())`, which is not a sqlite
- * function and fails at `migration:run` on a fresh sqlite app. Every timestamp
- * here is written explicitly by the store instead.
+ * No `t.timestamps()`: every timestamp here is written explicitly by the
+ * store, so the columns carry no DDL default.
  *
  * Every string that is a primary key or an index stays well inside MySQL's
  * InnoDB utf8mb4 limit of 3072 bytes (768 characters). A hash is 64 characters

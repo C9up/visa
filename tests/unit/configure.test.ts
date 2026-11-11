@@ -100,9 +100,10 @@ describe("visa > configure", () => {
 		]) {
 			expect(migration?.content, table).toContain(table);
 		}
-		// `t.timestamps()` emits `DEFAULT (NOW())`, which is not a sqlite
-		// function and fails at migration:run on a fresh sqlite app. Read off the
-		// code, not the prose — the comment in the stub names it to explain why.
+		// The store writes every timestamp itself, so the stub declares the
+		// columns explicitly, with no DDL default, rather than through
+		// `t.timestamps()`. Read off the code, not the prose — the comment in the
+		// stub names the helper to explain why.
 		const code = (migration?.content ?? "")
 			.split("\n")
 			.filter((line) => !line.trim().startsWith("*") && !line.includes("//"))
