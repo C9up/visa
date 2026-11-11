@@ -265,6 +265,57 @@ describe("visa > authorize > redirect URIs", () => {
 		expect(wrongPath.type).toBe("error");
 	});
 
+	it("extends the port exception to the IPv6 loopback literal", async () => {
+		// RFC 8252 §7.3: `http://[::1]:{port}/{path}` is the IPv6 form of the
+		// same rule, any port at request time.
+		const h = await harness({
+			id: "native6",
+			redirectUris: ["http://[::1]:1234/cb"],
+			tokenEndpointAuthMethod: "none",
+		});
+		const ok = await h.visa.authorize(
+			{
+				response_type: "code",
+				client_id: "native6",
+				redirect_uri: "http://[::1]:40000/cb",
+				code_challenge: pkce().challenge,
+				code_challenge_method: "S256",
+			},
+			"user-1",
+		);
+		expect(ok.type).not.toBe("error");
+	});
+
+	it("keeps `localhost` out of the port exception, matching it exactly", async () => {
+		// RFC 8252 §8.3 / OAuth 2.1 §8.4.2 limit the exception to the IP
+		// literals: `localhost` can resolve to a non-loopback address through
+		// the hosts file or DNS, and then a "loopback" redirect on another port
+		// sends the code to whoever listens there.
+		const h = await harness({
+			id: "native-localhost",
+			redirectUris: ["http://localhost:1234/cb"],
+			tokenEndpointAuthMethod: "none",
+		});
+		const request = {
+			response_type: "code" as const,
+			client_id: "native-localhost",
+			code_challenge: pkce().challenge,
+			code_challenge_method: "S256",
+		};
+
+		const otherPort = await h.visa.authorize(
+			{ ...request, redirect_uri: "http://localhost:9999/cb" },
+			"user-1",
+		);
+		expect(otherPort.type).toBe("error");
+
+		const exact = await h.visa.authorize(
+			{ ...request, redirect_uri: "http://localhost:1234/cb" },
+			"user-1",
+		);
+		expect(exact.type).not.toBe("error");
+	});
+
 	it("requires the parameter when the client registered several", async () => {
 		// Picking one for the client is picking where the code goes.
 		const h = await harness({
