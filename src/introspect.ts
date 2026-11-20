@@ -12,10 +12,36 @@ import { hashSecret } from "./crypto.js";
 import { OAuthError } from "./errors.js";
 import { audienceAllows } from "./resource.js";
 import type { VisaStore } from "./store.js";
-import type { IntrospectionResponse } from "./types.js";
+import type {
+	AccessToken,
+	Client,
+	IntrospectionResponse,
+	RefreshToken,
+} from "./types.js";
 
 /** `{ active: false }` — the only thing an inactive token ever reveals. */
 const INACTIVE: IntrospectionResponse = { active: false };
+
+/** Who may introspect a token other than the client it was issued to. */
+export interface IntrospectionOptions {
+	/**
+	 * Client ids of the protected resources allowed to introspect any ACCESS
+	 * token, whichever client it was issued to.
+	 *
+	 * RFC 7662 §2.1: "The protected resource calls the introspection endpoint",
+	 * and §4 leaves to the server which callers it answers. Without a rule a
+	 * resource server in another process has no way to check a token: `verify()`
+	 * needs the store, and introspection only ever answered the client the token
+	 * was issued to, which already knows it. Named here rather than inferred, so
+	 * a client registering itself (RFC 7591) never gains it.
+	 *
+	 * Only a confidential client counts — a public one authenticates with
+	 * nothing, so naming it would open introspection to anyone who knows its
+	 * id. Refresh tokens stay with their own client: they are never sent to a
+	 * resource server (RFC 6749 §1.5).
+	 */
+	resourceServers?: readonly string[];
+}
 
 export async function introspect(
 	request: Record<string, unknown>,
@@ -23,6 +49,7 @@ export async function introspect(
 	store: VisaStore,
 	now: Date = new Date(),
 	issuer?: string,
+	options: IntrospectionOptions = {},
 ): Promise<IntrospectionResponse> {
 	// The CALLER authenticates — introspection tells you whether a credential
 	// is live, which is exactly what an attacker wants to ask.
@@ -38,37 +65,84 @@ export async function introspect(
 	const hint =
 		asString(request.token_hint) ?? asString(request.token_type_hint);
 
-	// The hint is an optimisation, never a filter: a wrong hint must still
-	// find the token (RFC 7662 §2.1).
-	const access =
-		hint === "refresh_token" ? null : await store.findAccessToken(hash);
-	if (access !== null) {
-		if (access.revokedAt !== undefined || access.expiresAt <= now) {
-			return INACTIVE;
-		}
-		// A client may only introspect its own tokens.
-		if (access.clientId !== caller.id) return INACTIVE;
-		return {
-			active: true,
-			...(issuer === undefined ? {} : { iss: issuer }),
-			scope: access.scopes.join(" "),
-			client_id: access.clientId,
-			token_type: "Bearer",
-			exp: Math.floor(access.expiresAt.getTime() / 1000),
-			...(access.userId === undefined ? {} : { sub: access.userId }),
-			// RFC 8707 §3 names introspection as where a resource server learns
-			// what a token was minted for.
-			...(access.audience === undefined ? {} : { aud: access.audience }),
-		};
+	// The hint is an optimisation, never a filter: RFC 7662 §2.1 — "If the
+	// server is unable to locate the token using the given hint, it MUST
+	// extend its search across all of its supported token types". It only
+	// decides which table is read first.
+	if (hint === "refresh_token") {
+		const refresh = await store.findRefreshToken(hash);
+		if (refresh !== null)
+			return describeRefresh(refresh, caller.id, now, issuer);
+		const access = await store.findAccessToken(hash);
+		if (access === null) return INACTIVE;
+		return describeAccess(access, caller, now, issuer, options);
 	}
-
+	const access = await store.findAccessToken(hash);
+	if (access !== null) {
+		return describeAccess(access, caller, now, issuer, options);
+	}
 	const refresh = await store.findRefreshToken(hash);
 	if (refresh === null) return INACTIVE;
+	return describeRefresh(refresh, caller.id, now, issuer);
+}
+
+/**
+ * Whether `caller` may learn about a token issued to `clientId`.
+ *
+ * The client the token was issued to, always; a protected resource named in
+ * `resourceServers`, for access tokens only. Anyone else reads
+ * `{ active: false }`, exactly as for a token that does not exist.
+ */
+function mayIntrospectAccess(
+	caller: Client,
+	clientId: string,
+	options: IntrospectionOptions,
+): boolean {
+	if (caller.id === clientId) return true;
+	return (
+		caller.tokenEndpointAuthMethod !== "none" &&
+		(options.resourceServers ?? []).includes(caller.id)
+	);
+}
+
+function describeAccess(
+	access: AccessToken,
+	caller: Client,
+	now: Date,
+	issuer: string | undefined,
+	options: IntrospectionOptions,
+): IntrospectionResponse {
+	if (access.revokedAt !== undefined || access.expiresAt <= now) {
+		return INACTIVE;
+	}
+	if (!mayIntrospectAccess(caller, access.clientId, options)) return INACTIVE;
+	return {
+		active: true,
+		...(issuer === undefined ? {} : { iss: issuer }),
+		scope: access.scopes.join(" "),
+		client_id: access.clientId,
+		token_type: "Bearer",
+		exp: Math.floor(access.expiresAt.getTime() / 1000),
+		...(access.userId === undefined ? {} : { sub: access.userId }),
+		// RFC 8707 §3 names introspection as where a resource server learns
+		// what a token was minted for.
+		...(access.audience === undefined ? {} : { aud: access.audience }),
+	};
+}
+
+function describeRefresh(
+	refresh: RefreshToken,
+	callerId: string,
+	now: Date,
+	issuer: string | undefined,
+): IntrospectionResponse {
 	if (
 		refresh.revokedAt !== undefined ||
 		refresh.consumedAt !== undefined ||
 		refresh.expiresAt <= now ||
-		refresh.clientId !== caller.id
+		// A refresh token never travels to a resource server: only the client
+		// it was issued to has any business asking about it.
+		refresh.clientId !== callerId
 	) {
 		return INACTIVE;
 	}

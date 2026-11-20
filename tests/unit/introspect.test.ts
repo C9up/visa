@@ -89,6 +89,100 @@ describe("visa > introspection", () => {
 			),
 		).rejects.toMatchObject({ code: "invalid_client" });
 	});
+
+	it("finds an access token even when the hint says refresh_token", async () => {
+		// RFC 7662 §2.1: a server that cannot locate the token with the hint
+		// MUST extend its search to every token type. The refresh hint used to
+		// skip the access table, and a live token was reported dead.
+		const h = await harness();
+		const tokens = await pair(h);
+		const result = await h.visa.introspect(
+			{ token: tokens.access_token, token_type_hint: "refresh_token" },
+			creds(h),
+		);
+		expect(result).toMatchObject({
+			active: true,
+			client_id: h.client.id,
+			token_type: "Bearer",
+		});
+	});
+
+	it("describes a refresh token looked up with its own hint", async () => {
+		const h = await harness();
+		const tokens = await pair(h);
+		const result = await h.visa.introspect(
+			{ token: tokens.refresh_token, token_type_hint: "refresh_token" },
+			creds(h),
+		);
+		expect(result).toMatchObject({ active: true, client_id: h.client.id });
+	});
+});
+
+describe("visa > introspection by a resource server", () => {
+	/** `app` gets the user's tokens; `api` is the protected resource. */
+	async function withResourceServer(
+		api: {
+			id?: string;
+			tokenEndpointAuthMethod?: "client_secret_basic" | "none";
+		} = {},
+		resourceServers: readonly string[] = ["api"],
+	) {
+		const h = await harness({}, { introspection: { resourceServers } });
+		const tokens = await pair(h);
+		const { client, secret } = await h.visa.registerClient({
+			id: api.id ?? "api",
+			name: "The API",
+			redirectUris: [REDIRECT],
+			grantTypes: ["client_credentials"],
+			tokenEndpointAuthMethod:
+				api.tokenEndpointAuthMethod ?? "client_secret_basic",
+		});
+		const resource = { ...h, client, secret: secret ?? "" };
+		return { h, tokens, resource };
+	}
+
+	it("answers a named resource server about another client's access token", async () => {
+		// RFC 7662 §2.1: "The protected resource calls the introspection
+		// endpoint". Only the client the token was issued to used to get an
+		// answer, and it already knows its own token.
+		const { h, tokens, resource } = await withResourceServer();
+		const result = await h.visa.introspect(
+			{ token: tokens.access_token },
+			creds(resource),
+		);
+		expect(result).toMatchObject({
+			active: true,
+			client_id: h.client.id,
+			sub: "user-1",
+			scope: "profile",
+		});
+	});
+
+	it("still answers inactive to a client that is not named", async () => {
+		const { h, tokens, resource } = await withResourceServer({}, ["other"]);
+		expect(
+			await h.visa.introspect({ token: tokens.access_token }, creds(resource)),
+		).toEqual({ active: false });
+	});
+
+	it("never answers a public client, even a named one", async () => {
+		// A public client authenticates with nothing: naming it would let
+		// anyone who knows its id introspect every token.
+		const { h, tokens, resource } = await withResourceServer({
+			tokenEndpointAuthMethod: "none",
+		});
+		expect(
+			await h.visa.introspect({ token: tokens.access_token }, creds(resource)),
+		).toEqual({ active: false });
+	});
+
+	it("keeps refresh tokens to the client they were issued to", async () => {
+		// A refresh token is never sent to a resource server (RFC 6749 §1.5).
+		const { h, tokens, resource } = await withResourceServer();
+		expect(
+			await h.visa.introspect({ token: tokens.refresh_token }, creds(resource)),
+		).toEqual({ active: false });
+	});
 });
 
 describe("visa > revocation", () => {

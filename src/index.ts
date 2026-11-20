@@ -52,7 +52,12 @@ export {
 	type VisaGuardConfig,
 	visaGuard,
 } from "./guard.js";
-export { introspect, revoke, verifyAccessToken } from "./introspect.js";
+export {
+	type IntrospectionOptions,
+	introspect,
+	revoke,
+	verifyAccessToken,
+} from "./introspect.js";
 export {
 	assertResourceIdentifier,
 	type ChallengeOptions,

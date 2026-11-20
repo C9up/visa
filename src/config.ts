@@ -3,6 +3,7 @@
  * provider reads out of the config store.
  */
 
+import type { IntrospectionOptions } from "./introspect.js";
 import type { RegistrationOptions } from "./register.js";
 import type { VisaStore } from "./store.js";
 
@@ -45,6 +46,16 @@ export interface VisaConfigInput {
 	 * `initialAccessToken` before shipping one.
 	 */
 	registration?: RegistrationOptions;
+	/**
+	 * Which protected resources may introspect a token issued to another client
+	 * (RFC 7662).
+	 *
+	 * Left out, `/oauth/introspect` answers only the client a token was issued
+	 * to. A resource server in another process that checks tokens through it
+	 * is registered as a confidential client and named here:
+	 * `introspection: { resourceServers: ['api'] }`.
+	 */
+	introspection?: IntrospectionOptions;
 	/**
 	 * The protected resource this server issues tokens for (RFC 9728).
 	 *

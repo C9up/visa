@@ -24,7 +24,12 @@ import {
 } from "./clients.js";
 import { hashMatches, hashSecret, randomToken, sha256 } from "./crypto.js";
 import { OAuthError, VisaError } from "./errors.js";
-import { introspect, revoke, verifyAccessToken } from "./introspect.js";
+import {
+	type IntrospectionOptions,
+	introspect,
+	revoke,
+	verifyAccessToken,
+} from "./introspect.js";
 import {
 	type ClientRegistrationRequest,
 	type ClientRegistrationResponse,
@@ -50,6 +55,8 @@ export interface VisaConfig extends AuthorizeOptions, TokenOptions {
 	store: VisaStore;
 	/** Whether clients may register themselves, and on what terms (RFC 7591). */
 	registration?: RegistrationOptions;
+	/** Which protected resources may introspect tokens (RFC 7662 §2.1, §4). */
+	introspection?: IntrospectionOptions;
 	/**
 	 * How long a consent page may stay open before its answer is refused, in
 	 * seconds. Ten minutes by default — see {@link VisaManager.consentTicket}.
@@ -380,7 +387,14 @@ export class VisaManager {
 		credentials: ClientCredentials,
 		now: Date = new Date(),
 	): Promise<IntrospectionResponse> {
-		return introspect(body, credentials, this.#config.store, now, this.issuer);
+		return introspect(
+			body,
+			credentials,
+			this.#config.store,
+			now,
+			this.issuer,
+			this.#config.introspection,
+		);
 	}
 
 	async revoke(
