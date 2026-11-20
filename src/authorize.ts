@@ -40,6 +40,18 @@ export interface AuthorizationRequest {
 	resource?: string | string[];
 }
 
+/**
+ * An authorization request as a query parser hands it over.
+ *
+ * Every field may hold anything: `scope=a&scope=b` and `scope[]=a` arrive as
+ * an array, `scope[x]=1` as an object. {@link validateAuthorizationRequest}
+ * narrows each one before it is used, so a repeated or bracketed parameter is
+ * an `invalid_request` rather than a TypeError and a 500.
+ */
+export type UntrustedAuthorizationRequest = {
+	readonly [K in keyof AuthorizationRequest]?: unknown;
+};
+
 /** A request that passed every check, with the values it resolved to. */
 export interface ValidatedRequest {
 	client: Client;
@@ -99,35 +111,53 @@ export interface AuthorizeOptions {
  * must not be bounced back, `OAuthError` when it may.
  */
 export async function validateAuthorizationRequest(
-	request: AuthorizationRequest,
+	request: UntrustedAuthorizationRequest,
 	store: VisaStore,
 	options: AuthorizeOptions = {},
 ): Promise<ValidatedRequest> {
 	// Order matters: everything that decides WHERE an error may go has to be
-	// settled before any error is produced.
-	if (request.client_id === undefined || request.client_id === "") {
+	// settled before any error is produced. A repeated `client_id` or
+	// `redirect_uri` is one of those, so it is shown, never redirected.
+	const clientId = singleValue(request, "client_id", unredirectable);
+	if (clientId === undefined || clientId === "") {
 		throw new UnredirectableError(
 			new OAuthError("invalid_request", "client_id is required."),
 		);
 	}
-	const client = await store.findClient(request.client_id);
+	const requestedRedirectUri = singleValue(
+		request,
+		"redirect_uri",
+		unredirectable,
+	);
+	const client = await store.findClient(clientId);
 	if (client === null) {
 		throw new UnredirectableError(
 			new OAuthError("invalid_request", "Unknown client."),
 		);
 	}
 
-	const redirectUri = resolveRedirectUri(request.redirect_uri, client);
+	const redirectUri = resolveRedirectUri(requestedRedirectUri, client);
 
 	// From here the redirect URI is verified, so an error may travel back.
-	if (request.response_type !== "code") {
+	const responseType = singleValue(request, "response_type", redirectable);
+	const scope = singleValue(request, "scope", redirectable);
+	const state = singleValue(request, "state", redirectable);
+	const nonce = singleValue(request, "nonce", redirectable);
+	singleValue(request, "prompt", redirectable);
+	const challenge = singleValue(request, "code_challenge", redirectable);
+	const challengeMethod = singleValue(
+		request,
+		"code_challenge_method",
+		redirectable,
+	);
+	if (responseType !== "code") {
 		throw new OAuthError(
-			request.response_type === undefined
+			responseType === undefined
 				? "invalid_request"
 				: "unsupported_response_type",
 			// The implicit grant is gone in 2.1, and `token` is its response
 			// type — saying so beats a blank refusal for whoever is porting.
-			request.response_type === "token"
+			responseType === "token"
 				? "The implicit grant is not supported; use response_type=code."
 				: "Only response_type=code is supported.",
 		);
@@ -136,12 +166,13 @@ export async function validateAuthorizationRequest(
 	assertGrantAllowed(client, "authorization_code");
 
 	const { codeChallenge, codeChallengeMethod } = readChallenge(
-		request,
+		challenge,
+		challengeMethod,
 		options,
 	);
-	const scopes = resolveScopes(request.scope, client);
+	const scopes = resolveScopes(scope, client);
 	const resources = validateResources(
-		readResourceParameter(request.resource),
+		readResourceParameter(resourceValue(request.resource)),
 		options.resourcesSupported,
 	);
 
@@ -149,14 +180,63 @@ export async function validateAuthorizationRequest(
 		client,
 		redirectUri,
 		redirectUriProvided:
-			request.redirect_uri !== undefined && request.redirect_uri !== "",
+			requestedRedirectUri !== undefined && requestedRedirectUri !== "",
 		scopes,
-		state: request.state,
+		state,
 		codeChallenge,
 		codeChallengeMethod,
-		nonce: request.nonce,
+		nonce,
 		resources,
 	};
+}
+
+/** How a malformed parameter is refused: shown to the user, or redirected. */
+type Refusal = (error: OAuthError) => Error;
+
+const unredirectable: Refusal = (error) => new UnredirectableError(error);
+const redirectable: Refusal = (error) => error;
+
+/**
+ * One parameter, which must be a single string when present.
+ *
+ * RFC 6749 §3.1: "Request and response parameters MUST NOT be included more
+ * than once." A parser hands a repeated parameter over as an array, and a
+ * bracketed one (`scope[x]=1`) as an object; either is an `invalid_request`.
+ */
+function singleValue(
+	request: UntrustedAuthorizationRequest,
+	key: Exclude<keyof AuthorizationRequest, "resource">,
+	refuse: Refusal,
+): string | undefined {
+	const value = request[key];
+	if (value === undefined || typeof value === "string") return value;
+	throw refuse(
+		new OAuthError(
+			"invalid_request",
+			`${key} must be given once, as a string.`,
+		),
+	);
+}
+
+/**
+ * `resource` is the one parameter RFC 8707 §2 lets a request repeat — one or
+ * several, each a string. Anything else (an object, a nested array, a number)
+ * is not a resource indicator, and is refused rather than dropped: a token
+ * left unbound because its `resource` was unreadable is a token for
+ * everything.
+ */
+function resourceValue(value: unknown): string | string[] | undefined {
+	if (value === undefined || typeof value === "string") return value;
+	if (Array.isArray(value)) {
+		const strings = value.filter(
+			(entry): entry is string => typeof entry === "string",
+		);
+		if (strings.length === value.length) return strings;
+	}
+	throw new OAuthError(
+		"invalid_request",
+		"resource must be one or several strings.",
+	);
 }
 
 /**
@@ -211,10 +291,10 @@ export function isPkceValue(value: string): boolean {
 }
 
 function readChallenge(
-	request: AuthorizationRequest,
+	challenge: string | undefined,
+	challengeMethod: string | undefined,
 	options: AuthorizeOptions,
 ): { codeChallenge: string; codeChallengeMethod: "S256" | "plain" } {
-	const challenge = request.code_challenge;
 	if (challenge === undefined || challenge === "") {
 		// Mandatory in 2.1 for every client, confidential ones included.
 		throw new OAuthError("invalid_request", "code_challenge is required.");
@@ -225,7 +305,7 @@ function readChallenge(
 			"code_challenge must be 43 to 128 unreserved characters (RFC 7636 §4.2).",
 		);
 	}
-	const method = request.code_challenge_method ?? "plain";
+	const method = challengeMethod ?? "plain";
 	if (method === "S256")
 		return { codeChallenge: challenge, codeChallengeMethod: "S256" };
 	if (method === "plain" && options.allowPlainChallenge === true) {

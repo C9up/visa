@@ -471,3 +471,99 @@ describe("visa > authorize > the code itself", () => {
 		});
 	});
 });
+
+describe("visa > authorize > parameters a query parser repeated", () => {
+	// `scope=a&scope=b` and `scope[]=a` reach `authorize()` as an array,
+	// `scope[x]=1` as an object. RFC 6749 §3.1: "Request and response
+	// parameters MUST NOT be included more than once." Each used to reach a
+	// string method and throw a TypeError — a 500 any visitor could cause.
+	const shapes: ReadonlyArray<[string, unknown]> = [
+		["an array", ["a", "b"]],
+		["an object", { x: "1" }],
+	];
+
+	function request(
+		h: Awaited<ReturnType<typeof harness>>,
+		override: Record<string, unknown>,
+	): Record<string, unknown> {
+		return {
+			response_type: "code",
+			client_id: h.client.id,
+			redirect_uri: REDIRECT,
+			code_challenge: pkce().challenge,
+			code_challenge_method: "S256",
+			state: "xyz",
+			...override,
+		};
+	}
+
+	for (const [shape, value] of shapes) {
+		for (const key of [
+			"response_type",
+			"scope",
+			"state",
+			"code_challenge",
+			"code_challenge_method",
+			"nonce",
+			"prompt",
+		]) {
+			it(`redirects invalid_request for ${key} as ${shape}`, async () => {
+				const h = await harness();
+				const outcome = await h.visa.authorize(
+					request(h, { [key]: value }),
+					"user-1",
+				);
+				expect(outcome.type, key).toBe("redirect");
+				if (outcome.type !== "redirect") throw new Error("unreachable");
+				const url = new URL(outcome.url);
+				expect(url.searchParams.get("error"), key).toBe("invalid_request");
+				// The state goes back only when it was one string — never a
+				// repeated one flattened into `a,b`.
+				expect(url.searchParams.get("state"), key).toBe(
+					key === "state" ? null : "xyz",
+				);
+			});
+		}
+
+		for (const key of ["client_id", "redirect_uri"]) {
+			it(`shows invalid_request, never redirected, for ${key} as ${shape}`, async () => {
+				// These decide where an error may go: a repeated one is shown.
+				const h = await harness();
+				const outcome = await h.visa.authorize(
+					request(h, { [key]: value }),
+					"user-1",
+				);
+				expect(outcome.type, key).toBe("error");
+				if (outcome.type !== "error") throw new Error("unreachable");
+				expect(outcome.error.code, key).toBe("invalid_request");
+			});
+		}
+	}
+
+	it("still takes several resource indicators, and refuses an object", async () => {
+		// RFC 8707 §2 is the one parameter allowed to repeat.
+		const h = await harness();
+		const several = await h.visa.authorize(
+			request(h, {
+				resource: ["https://api.example.test/a", "https://api.example.test/b"],
+			}),
+			"user-1",
+		);
+		expect(several.type).toBe("consent");
+		if (several.type !== "consent") throw new Error("unreachable");
+		expect(several.request.resources).toEqual([
+			"https://api.example.test/a",
+			"https://api.example.test/b",
+		]);
+
+		const object = await h.visa.authorize(
+			request(h, { resource: { x: "https://api.example.test/a" } }),
+			"user-1",
+		);
+		expect(object.type).toBe("redirect");
+		if (object.type !== "redirect") throw new Error("unreachable");
+		expect(new URL(object.url).searchParams.get("error")).toBe(
+			"invalid_request",
+		);
+	});
+});

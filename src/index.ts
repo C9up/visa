@@ -19,6 +19,7 @@ export {
 	issueAuthorizationCode,
 	successRedirect,
 	UnredirectableError,
+	type UntrustedAuthorizationRequest,
 	type ValidatedRequest,
 	validateAuthorizationRequest,
 } from "./authorize.js";

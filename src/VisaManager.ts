@@ -13,6 +13,7 @@ import {
 	issueAuthorizationCode,
 	successRedirect,
 	UnredirectableError,
+	type UntrustedAuthorizationRequest,
 	type ValidatedRequest,
 	validateAuthorizationRequest,
 } from "./authorize.js";
@@ -193,7 +194,7 @@ export class VisaManager {
 	 * `undefined` and the caller is told to authenticate first.
 	 */
 	async authorize(
-		request: AuthorizationRequest,
+		request: UntrustedAuthorizationRequest,
 		userId: string | undefined,
 	): Promise<AuthorizationOutcome> {
 		let validated: ValidatedRequest;
@@ -213,7 +214,13 @@ export class VisaManager {
 				if (uri === null) return { type: "error", error };
 				return {
 					type: "redirect",
-					url: errorRedirect(uri, error, request.state),
+					// Echoed only when it is one string: a repeated `state` may be
+					// the very parameter that was refused.
+					url: errorRedirect(
+						uri,
+						error,
+						typeof request.state === "string" ? request.state : undefined,
+					),
 				};
 			}
 			throw error;
@@ -475,17 +482,22 @@ export class VisaManager {
 	 * trust. Re-resolved rather than remembered: the validation that failed is
 	 * the one that would have produced it.
 	 */
-	async #redirectUriFor(request: AuthorizationRequest): Promise<string | null> {
-		if (request.client_id === undefined) return null;
-		const client = await this.#config.store.findClient(request.client_id);
+	async #redirectUriFor(
+		request: UntrustedAuthorizationRequest,
+	): Promise<string | null> {
+		const clientId = request.client_id;
+		const redirectUri = request.redirect_uri;
+		if (typeof clientId !== "string") return null;
+		const client = await this.#config.store.findClient(clientId);
 		if (client === null) return null;
-		if (request.redirect_uri === undefined) {
+		if (redirectUri === undefined) {
 			return client.redirectUris.length === 1
 				? (client.redirectUris[0] ?? null)
 				: null;
 		}
-		return redirectUriMatches(request.redirect_uri, client.redirectUris)
-			? request.redirect_uri
+		if (typeof redirectUri !== "string") return null;
+		return redirectUriMatches(redirectUri, client.redirectUris)
+			? redirectUri
 			: null;
 	}
 }
