@@ -165,8 +165,9 @@ export default class VisaProvider {
 			});
 		}
 
-		// RFC 8414 — what a client fetches to discover the endpoints.
-		router.get("/.well-known/oauth-authorization-server", async (ctx) => {
+		// RFC 8414 — what a client fetches to discover the endpoints, at the
+		// path §3.1 builds from the issuer.
+		router.get(authorizationServerMetadataPath(manager.issuer), async (ctx) => {
 			ctx.response.header("content-type", "application/json");
 			ctx.response.send({
 				issuer: manager.issuer,
@@ -258,6 +259,25 @@ export default class VisaProvider {
 			ctx.response.send(error.toResponse());
 		}
 	}
+}
+
+const AUTHORIZATION_SERVER_METADATA_PATH =
+	"/.well-known/oauth-authorization-server";
+
+/**
+ * Where the RFC 8414 document for `issuer` lives.
+ *
+ * §3.1: "If the issuer identifier value contains a path component, any
+ * terminating '/' MUST be removed before inserting '/.well-known/' and the
+ * well-known URI suffix between the host component and the path component."
+ * So `https://example.com/auth` publishes at
+ * `/.well-known/oauth-authorization-server/auth`, and only there: the root
+ * document would name an issuer other than the one a client fetching the
+ * root is looking for, and §3.3 has that client reject it.
+ */
+function authorizationServerMetadataPath(issuer: string): string {
+	const path = new URL(issuer).pathname.replace(/\/+$/, "");
+	return `${AUTHORIZATION_SERVER_METADATA_PATH}${path}`;
 }
 
 /**

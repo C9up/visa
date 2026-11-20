@@ -145,6 +145,30 @@ describe("visa > provider", () => {
 		]);
 	});
 
+	it("serves the metadata of an issuer with a path where RFC 8414 puts it", async () => {
+		// §3.1 inserts the well-known segment between the host and the path.
+		// The document used to be served only at the root, where it names an
+		// issuer a client fetching the root rejects (§3.3).
+		const issuer = `${ISSUER}/auth`;
+		const { routes } = await started(new MemoryStore(), {
+			issuer: `${issuer}/`,
+		});
+
+		expect(routes.has("GET /.well-known/oauth-authorization-server")).toBe(
+			false,
+		);
+		const handler = routes.get(
+			"GET /.well-known/oauth-authorization-server/auth",
+		);
+		if (!handler) throw new Error("no metadata route at the RFC 8414 path");
+		const { ctx, recorded } = fakeContext({});
+		await handler(ctx);
+		expect(recorded.body).toMatchObject({
+			issuer,
+			token_endpoint: `${issuer}/oauth/token`,
+		});
+	});
+
 	it("serves the protected resource metadata once one is declared", async () => {
 		// RFC 9728. Without the declaration nothing is mounted: a document
 		// announcing a resource nobody declared points clients at thin air.
