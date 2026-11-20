@@ -444,6 +444,36 @@ describe("visa > provider", () => {
 			expect(recorded.status).toBe(201);
 		});
 
+		it("answers a missing or wrong initial access token with a Bearer 401", async () => {
+			// RFC 7591 §3: "an error response appropriate to the OAuth 2.0
+			// token type" — for a bearer token, RFC 6750 §3.1. It used to be a
+			// 400 invalid_client_metadata, telling a client its metadata was
+			// wrong when its credential was.
+			const { routes } = await started(new MemoryStore(), {
+				registration: { enabled: true, initialAccessToken: "letmein" },
+			});
+			const metadata = { redirect_uris: [REDIRECT] };
+
+			const absent = fakeContext(metadata);
+			await route(routes, "POST /oauth/register")(absent.ctx);
+			expect(absent.recorded.status).toBe(401);
+			// No error attribute when no token was sent (§3.1).
+			expect(absent.recorded.headers["www-authenticate"]).toBe("Bearer");
+			expect(absent.recorded.body).toMatchObject({ error: "invalid_token" });
+
+			const wrong = fakeContext(metadata, "Bearer wrong");
+			await route(routes, "POST /oauth/register")(wrong.ctx);
+			expect(wrong.recorded.status).toBe(401);
+			expect(wrong.recorded.headers["www-authenticate"]).toBe(
+				'Bearer error="invalid_token"',
+			);
+			expect(wrong.recorded.body).toMatchObject({ error: "invalid_token" });
+
+			const right = fakeContext(metadata, "Bearer letmein");
+			await route(routes, "POST /oauth/register")(right.ctx);
+			expect(right.recorded.status).toBe(201);
+		});
+
 		it("ignores registration metadata in the query of the token endpoint", async () => {
 			// Registration metadata is only an OAuth parameter on /register: on
 			// the token endpoint it means nothing and is ignored.

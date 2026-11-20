@@ -35,6 +35,7 @@ export { defineConfig, type VisaConfigInput } from "./config.js";
 export { hashSecret, randomToken, secretMatches, sha256 } from "./crypto.js";
 export {
 	type AuthorizationErrorCode,
+	type BearerErrorCode,
 	OAuthError,
 	type ProtocolErrorCode,
 	type RegistrationErrorCode,

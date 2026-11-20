@@ -42,10 +42,18 @@ export type RegistrationErrorCode =
 	| "invalid_software_statement"
 	| "unapproved_software_statement";
 
+/**
+ * Error codes an endpoint protected by a bearer token answers with (RFC 6750
+ * §3.1) — the registration endpoint's initial access token among them (RFC
+ * 7591 §3: "an error response appropriate to the OAuth 2.0 token type").
+ */
+export type BearerErrorCode = "invalid_token";
+
 export type ProtocolErrorCode =
 	| AuthorizationErrorCode
 	| TokenErrorCode
-	| RegistrationErrorCode;
+	| RegistrationErrorCode
+	| BearerErrorCode;
 
 /**
  * A failure the client is told about, in the words the spec chose.
@@ -56,19 +64,32 @@ export type ProtocolErrorCode =
 export class OAuthError extends Error {
 	readonly code: ProtocolErrorCode;
 	readonly description: string | undefined;
-	/** 401 for `invalid_client`, 400 for everything else (§4.1.4). */
+	/**
+	 * 401 for `invalid_client` and `invalid_token`, 400 for everything else
+	 * (§4.1.4, RFC 6750 §3.1).
+	 */
 	readonly status: number;
+	/**
+	 * The `WWW-Authenticate` value a 401 carries, when the failure names one.
+	 *
+	 * A 401 has to say how to authenticate (RFC 9110 §15.5.2): `Basic` for a
+	 * client credential, `Bearer` for a token (RFC 6750 §3).
+	 */
+	readonly challenge: string | undefined;
 
 	constructor(
 		code: ProtocolErrorCode,
 		description?: string,
-		options: { status?: number } = {},
+		options: { status?: number; challenge?: string } = {},
 	) {
 		super(description === undefined ? code : `${code}: ${description}`);
 		this.name = "OAuthError";
 		this.code = code;
 		this.description = description;
-		this.status = options.status ?? (code === "invalid_client" ? 401 : 400);
+		this.status =
+			options.status ??
+			(code === "invalid_client" || code === "invalid_token" ? 401 : 400);
+		this.challenge = options.challenge;
 	}
 
 	/** The body, exactly as §4.1.4 shapes it. */

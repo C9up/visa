@@ -198,12 +198,23 @@ describe("visa > dynamic client registration", () => {
 	it("takes an initial access token when one is required", async () => {
 		const visa = server({ enabled: true, initialAccessToken: "letmein" });
 
+		// RFC 7591 §3 / RFC 6750 §3.1: the credential failed, not the metadata.
+		// Absent, the challenge carries no error attribute; wrong, it says
+		// invalid_token.
 		await expect(
 			visa.register({ redirect_uris: [CALLBACK] }),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({
+			code: "invalid_token",
+			status: 401,
+			challenge: "Bearer",
+		});
 		await expect(
 			visa.register({ redirect_uris: [CALLBACK] }, "wrong"),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({
+			code: "invalid_token",
+			status: 401,
+			challenge: 'Bearer error="invalid_token"',
+		});
 
 		const created = await visa.register(
 			{ redirect_uris: [CALLBACK] },
@@ -219,7 +230,7 @@ describe("visa > dynamic client registration", () => {
 			await expect(
 				visa.register({ redirect_uris: [CALLBACK] }, presented),
 				presented,
-			).rejects.toMatchObject({ code: "invalid_client_metadata" });
+			).rejects.toMatchObject({ code: "invalid_token", status: 401 });
 		}
 	});
 

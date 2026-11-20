@@ -22,6 +22,7 @@
 
 import { hashMatches, sha256 } from "./crypto.js";
 import { OAuthError, VisaError } from "./errors.js";
+import { wwwAuthenticate } from "./protectedResource.js";
 import type { Client, ClientAuthMethod, GrantType } from "./types.js";
 
 /** The metadata a request may send (§2). Unknown members are ignored. */
@@ -118,15 +119,29 @@ export function validateRegistration(
 		// operator-chosen string — often shorter than a minted token — that an
 		// anonymous caller may test once per request, as often as they like.
 		// Both sides are hashed first so the comparison never depends on the
-		// configured length either. Absent or wrong reads the same to the caller.
+		// configured length either.
+		//
+		// The refusal is about the credential, not the metadata: RFC 7591 §3
+		// answers an invalid initial access token with "an error response
+		// appropriate to the OAuth 2.0 token type", which for a bearer token is
+		// RFC 6750 §3.1 — 401, `invalid_token`, and a `Bearer` challenge. Absent,
+		// the challenge carries no error attribute (§3.1: a request without
+		// authentication "SHOULD NOT include an error code"). The caller knows
+		// whether it sent a token, so telling the two apart reveals nothing.
+		const presented = presentedToken !== undefined && presentedToken !== "";
 		if (
-			presentedToken === undefined ||
-			presentedToken === "" ||
+			!presented ||
 			!hashMatches(sha256(presentedToken), sha256(options.initialAccessToken))
 		) {
 			throw new OAuthError(
-				"invalid_client_metadata",
-				"Registration on this server needs an initial access token.",
+				"invalid_token",
+				"Registration on this server needs a valid initial access token.",
+				{
+					status: 401,
+					challenge: presented
+						? wwwAuthenticate({ error: "invalid_token" })
+						: wwwAuthenticate(),
+				},
 			);
 		}
 	}

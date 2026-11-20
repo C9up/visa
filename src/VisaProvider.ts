@@ -246,9 +246,14 @@ export default class VisaProvider {
 		} catch (error) {
 			if (!(error instanceof OAuthError)) throw error;
 			ctx.response.status(error.status);
-			if (error.code === "invalid_client") {
-				// §5.2: a 401 has to say how to authenticate.
-				ctx.response.header("www-authenticate", 'Basic realm="oauth"');
+			// §5.2: a 401 has to say how to authenticate — with the challenge
+			// the failure names (a bearer token's, RFC 6750 §3), else Basic for
+			// a client credential.
+			const challenge =
+				error.challenge ??
+				(error.code === "invalid_client" ? 'Basic realm="oauth"' : undefined);
+			if (challenge !== undefined) {
+				ctx.response.header("www-authenticate", challenge);
 			}
 			ctx.response.send(error.toResponse());
 		}
