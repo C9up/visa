@@ -443,8 +443,11 @@ export class VisaManager {
 				const client = await store.findClient(consent.clientId);
 				const lastUsedAt = mine.reduce<Date | undefined>((latest, token) => {
 					if (token.lastUsedAt === undefined) return latest;
-					if (latest === undefined) return token.lastUsedAt;
-					return token.lastUsedAt > latest ? token.lastUsedAt : latest;
+					// Dates, so not Math.max: it would answer a number.
+					if (latest === undefined || token.lastUsedAt > latest) {
+						return token.lastUsedAt;
+					}
+					return latest;
 				}, undefined);
 
 				return {
