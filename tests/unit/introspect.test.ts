@@ -87,7 +87,7 @@ describe("visa > introspection", () => {
 				{ token: tokens.access_token },
 				{ clientId: h.client.id },
 			),
-		).rejects.toMatchObject({ code: "invalid_client" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client" });
 	});
 
 	it("finds an access token even when the hint says refresh_token", async () => {
@@ -200,7 +200,7 @@ describe("visa > revocation", () => {
 				{ grant_type: "refresh_token", refresh_token: tokens.refresh_token },
 				creds(h),
 			),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 	});
 
 	it("revokes an access token on its own without touching the refresh", async () => {

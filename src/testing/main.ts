@@ -11,6 +11,7 @@
  */
 
 import { randomToken, sha256 } from "../crypto.js";
+import { E_VISA_INTERNAL, E_VISA_TEST_AUTHORIZE_FAILED } from "../errors.js";
 import { MemoryStore } from "../stores/memory.js";
 import type { Client, GrantType, TokenResponse } from "../types.js";
 import { type VisaConfig, VisaManager } from "../VisaManager.js";
@@ -101,10 +102,12 @@ export async function testVisa(
 					: outcome.type === "redirect"
 						? outcome.url
 						: (() => {
-								throw new Error(`authorize failed: ${outcome.error.message}`);
+								throw new E_VISA_TEST_AUTHORIZE_FAILED([outcome.error.message]);
 							})();
 			const code = new URL(url).searchParams.get("code");
-			if (code === null) throw new Error(`no code in ${url}`);
+			if (code === null) {
+				throw new E_VISA_INTERNAL([`no code in ${url}`]);
+			}
 			return visa.token(
 				{
 					grant_type: "authorization_code",

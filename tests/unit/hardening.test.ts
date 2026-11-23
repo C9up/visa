@@ -29,7 +29,7 @@ describe("visa > the registered authentication method is the only one", () => {
 				{ grant_type: "client_credentials" },
 				{ ...creds(h), method: "client_secret_post" },
 			),
-		).rejects.toMatchObject({ code: "invalid_client" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client" });
 	});
 
 	it("refuses a POST client that sends Basic", async () => {
@@ -42,7 +42,7 @@ describe("visa > the registered authentication method is the only one", () => {
 				{ grant_type: "client_credentials" },
 				{ ...creds(h), method: "client_secret_basic" },
 			),
-		).rejects.toMatchObject({ code: "invalid_client" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client" });
 	});
 
 	it("accepts the method it registered", async () => {

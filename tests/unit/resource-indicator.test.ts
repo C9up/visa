@@ -151,7 +151,7 @@ describe("visa > resource indicators", () => {
 		const code = await authorized(visa, CALENDAR);
 
 		await expect(exchange(visa, code, FILES)).rejects.toMatchObject({
-			code: "invalid_target",
+			oauthCode: "invalid_target",
 		});
 	});
 
@@ -162,7 +162,7 @@ describe("visa > resource indicators", () => {
 		const code = await authorized(visa);
 
 		await expect(exchange(visa, code, CALENDAR)).rejects.toMatchObject({
-			code: "invalid_target",
+			oauthCode: "invalid_target",
 		});
 	});
 
@@ -183,7 +183,7 @@ describe("visa > resource indicators", () => {
 			},
 			"user-7",
 		);
-		if (outcome.type === "error") return outcome.error.code;
+		if (outcome.type === "error") return outcome.error.oauthCode;
 		if (outcome.type !== "redirect") return null;
 		return new URL(outcome.url).searchParams.get("error");
 	}
@@ -306,7 +306,7 @@ describe("visa > resource indicators", () => {
 					method: "client_secret_basic",
 				},
 			),
-		).rejects.toMatchObject({ code: "invalid_target" });
+		).rejects.toMatchObject({ oauthCode: "invalid_target" });
 	});
 
 	it("reports the audience on introspection", async () => {

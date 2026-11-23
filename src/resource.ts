@@ -14,7 +14,7 @@
  * somewhere it may not go.
  */
 
-import { OAuthError } from "./errors.js";
+import { E_VISA_OAUTH_ERROR } from "./errors.js";
 
 /**
  * Normalise however the parameter arrived into a list.
@@ -48,13 +48,13 @@ export function validateResources(
 		try {
 			url = new URL(value);
 		} catch {
-			throw new OAuthError(
+			throw new E_VISA_OAUTH_ERROR(
 				"invalid_target",
 				`resource must be an absolute URI: ${value}`,
 			);
 		}
 		if (url.hash !== "") {
-			throw new OAuthError(
+			throw new E_VISA_OAUTH_ERROR(
 				"invalid_target",
 				`resource must not carry a fragment: ${value}`,
 			);
@@ -63,7 +63,7 @@ export function validateResources(
 		// one — so it travels rather than being refused or stripped. Stripping
 		// would hand back a token for a resource nobody asked for.
 		if (accepted !== undefined && !accepted.includes(value)) {
-			throw new OAuthError(
+			throw new E_VISA_OAUTH_ERROR(
 				"invalid_target",
 				`this server does not issue tokens for ${value}`,
 			);
@@ -89,14 +89,14 @@ export function narrowResources(
 		// Nothing was bound at authorization time, so there is nothing to narrow
 		// FROM. Letting the request name one here would mint a token for an
 		// audience the user never saw.
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_target",
 			"this grant is not bound to any resource",
 		);
 	}
 	const outside = requested.filter((value) => !granted.includes(value));
 	if (outside.length > 0) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_target",
 			`this grant does not cover ${outside.join(", ")}`,
 		);

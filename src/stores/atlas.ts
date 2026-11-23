@@ -16,6 +16,7 @@
  * working tokens.
  */
 
+import { E_VISA_CORRUPT_ROW } from "../errors.js";
 import type { VisaStore } from "../store.js";
 import type {
 	AccessToken,
@@ -95,11 +96,15 @@ function decodeList(value: unknown, column: string): string[] {
 		return value.filter((entry): entry is string => typeof entry === "string");
 	}
 	if (typeof value !== "string") {
-		throw new Error(`[visa] ${column} holds ${typeof value}, expected a list`);
+		throw new E_VISA_CORRUPT_ROW([
+			`[visa] ${column} holds ${typeof value}, expected a list`,
+		]);
 	}
 	const parsed: unknown = JSON.parse(value);
 	if (!Array.isArray(parsed)) {
-		throw new Error(`[visa] ${column} is not a JSON array: ${value}`);
+		throw new E_VISA_CORRUPT_ROW([
+			`[visa] ${column} is not a JSON array: ${value}`,
+		]);
 	}
 	return parsed.filter((entry): entry is string => typeof entry === "string");
 }
@@ -119,14 +124,18 @@ function decodeDate(value: unknown): Date | undefined {
 function requireDate(value: unknown, column: string): Date {
 	const date = decodeDate(value);
 	if (date === undefined) {
-		throw new Error(`[visa] ${column} is not a date: ${String(value)}`);
+		throw new E_VISA_CORRUPT_ROW([
+			`[visa] ${column} is not a date: ${String(value)}`,
+		]);
 	}
 	return date;
 }
 
 function requireString(value: unknown, column: string): string {
 	if (typeof value !== "string") {
-		throw new Error(`[visa] ${column} is not a string: ${String(value)}`);
+		throw new E_VISA_CORRUPT_ROW([
+			`[visa] ${column} is not a string: ${String(value)}`,
+		]);
 	}
 	return value;
 }
@@ -532,7 +541,7 @@ function readAuthMethod(value: unknown): ClientAuthMethod {
 	) {
 		return value;
 	}
-	throw new Error(
+	throw new E_VISA_CORRUPT_ROW([
 		`[visa] token_endpoint_auth_method is not one of client_secret_basic, client_secret_post, none: ${String(value)}`,
-	);
+	]);
 }

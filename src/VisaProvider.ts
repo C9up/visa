@@ -22,7 +22,7 @@
 
 import "./augmentations.js";
 import type { VisaConfigInput } from "./config.js";
-import { OAuthError } from "./errors.js";
+import { E_VISA_MISSING_CONFIG, E_VISA_OAUTH_ERROR } from "./errors.js";
 import {
 	PROTECTED_RESOURCE_PATH,
 	protectedResourceMetadata,
@@ -75,9 +75,7 @@ export default class VisaProvider {
 		this.app.container.singleton(VisaManager, () => {
 			const config = this.app.config.get<VisaConfigInput>("visa");
 			if (config === undefined) {
-				throw new Error(
-					"[visa] no `config/visa.ts` — run `ream configure @c9up/visa`.",
-				);
+				throw new E_VISA_MISSING_CONFIG();
 			}
 			const manager = new VisaManager(config);
 			setVisa(manager);
@@ -230,7 +228,7 @@ export default class VisaProvider {
 	}
 
 	/**
-	 * Run a handler and turn an `OAuthError` into the body the spec names.
+	 * Run a handler and turn an `E_VISA_OAUTH_ERROR` into the body the spec names.
 	 *
 	 * Anything else is rethrown: an unexpected failure is the application's
 	 * exception handler's business, and dressing it as an OAuth error would
@@ -245,14 +243,16 @@ export default class VisaProvider {
 			if (body !== null) ctx.response.send(body);
 			else ctx.response.send("");
 		} catch (error) {
-			if (!(error instanceof OAuthError)) throw error;
+			if (!(error instanceof E_VISA_OAUTH_ERROR)) throw error;
 			ctx.response.status(error.status);
 			// §5.2: a 401 has to say how to authenticate — with the challenge
 			// the failure names (a bearer token's, RFC 6750 §3), else Basic for
 			// a client credential.
 			const challenge =
 				error.challenge ??
-				(error.code === "invalid_client" ? 'Basic realm="oauth"' : undefined);
+				(error.oauthCode === "invalid_client"
+					? 'Basic realm="oauth"'
+					: undefined);
 			if (challenge !== undefined) {
 				ctx.response.header("www-authenticate", challenge);
 			}
@@ -351,7 +351,7 @@ function readBody(
 		forbidden.has(key),
 	);
 	if (inUrl.length > 0) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_request",
 			`OAuth parameters go in the request body, never in the URL: ${inUrl.join(", ")}.`,
 		);
@@ -359,7 +359,7 @@ function readBody(
 	const body = ctx.request.body();
 	if (body === undefined || body === null) return {};
 	if (!isRecord(body)) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_request",
 			"The request body must be a form or a JSON object.",
 		);

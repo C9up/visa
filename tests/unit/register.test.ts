@@ -63,11 +63,11 @@ describe("visa > dynamic client registration", () => {
 		// nobody asked for.
 		await expect(
 			server().register({ redirect_uris: [CALLBACK] }),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 
 		await expect(
 			server({ enabled: false }).register({ redirect_uris: [CALLBACK] }),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 	});
 
 	it("answers the fields §3.2.1 requires", async () => {
@@ -153,7 +153,7 @@ describe("visa > dynamic client registration", () => {
 		).resolves.toMatchObject({ id: created.client_id });
 		await expect(
 			authenticateClient(credentials, load, new Date("2026-01-01T01:01:00Z")),
-		).rejects.toMatchObject({ code: "invalid_client" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client" });
 	});
 
 	it("keeps a secret with no TTL working", async () => {
@@ -192,7 +192,7 @@ describe("visa > dynamic client registration", () => {
 			server({ enabled: true }).register({
 				redirect_uris: [CALLBACK, 42],
 			}),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 	});
 
 	it("takes an initial access token when one is required", async () => {
@@ -204,14 +204,14 @@ describe("visa > dynamic client registration", () => {
 		await expect(
 			visa.register({ redirect_uris: [CALLBACK] }),
 		).rejects.toMatchObject({
-			code: "invalid_token",
+			oauthCode: "invalid_token",
 			status: 401,
 			challenge: "Bearer",
 		});
 		await expect(
 			visa.register({ redirect_uris: [CALLBACK] }, "wrong"),
 		).rejects.toMatchObject({
-			code: "invalid_token",
+			oauthCode: "invalid_token",
 			status: 401,
 			challenge: 'Bearer error="invalid_token"',
 		});
@@ -230,7 +230,7 @@ describe("visa > dynamic client registration", () => {
 			await expect(
 				visa.register({ redirect_uris: [CALLBACK] }, presented),
 				presented,
-			).rejects.toMatchObject({ code: "invalid_token", status: 401 });
+			).rejects.toMatchObject({ oauthCode: "invalid_token", status: 401 });
 		}
 	});
 
@@ -299,7 +299,7 @@ describe("visa > dynamic client registration", () => {
 			await expect(
 				visa.register({ redirect_uris: [uri] }),
 				uri,
-			).rejects.toMatchObject({ code: "invalid_redirect_uri" });
+			).rejects.toMatchObject({ oauthCode: "invalid_redirect_uri" });
 		}
 	});
 
@@ -317,7 +317,7 @@ describe("visa > dynamic client registration", () => {
 		const visa = server({ enabled: true });
 
 		await expect(visa.register({})).rejects.toMatchObject({
-			code: "invalid_redirect_uri",
+			oauthCode: "invalid_redirect_uri",
 		});
 	});
 
@@ -326,7 +326,7 @@ describe("visa > dynamic client registration", () => {
 
 		await expect(
 			visa.register({ redirect_uris: [CALLBACK], scope: "profile admin" }),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 
 		const created = await visa.register({
 			redirect_uris: [CALLBACK],
@@ -353,7 +353,7 @@ describe("visa > dynamic client registration", () => {
 				redirect_uris: [CALLBACK],
 				grant_types: ["client_credentials"],
 			}),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 
 		const created = await visa.register({ redirect_uris: [CALLBACK] });
 		expect(created.grant_types).toEqual([
@@ -370,7 +370,7 @@ describe("visa > dynamic client registration", () => {
 				redirect_uris: [CALLBACK],
 				token_endpoint_auth_method: "private_key_jwt",
 			}),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 	});
 
 	it("issues no secret to a public client", async () => {
@@ -401,9 +401,9 @@ describe("visa > dynamic client registration", () => {
 
 		await expect(
 			visa.register({ redirect_uris: CALLBACK }),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 		await expect(
 			visa.register({ redirect_uris: [CALLBACK], scope: ["profile"] }),
-		).rejects.toMatchObject({ code: "invalid_client_metadata" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client_metadata" });
 	});
 });

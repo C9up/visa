@@ -21,7 +21,7 @@
  */
 
 import { hashMatches, sha256 } from "./crypto.js";
-import { OAuthError, VisaError } from "./errors.js";
+import { E_VISA_INVALID_SECRET_TTL, E_VISA_OAUTH_ERROR } from "./errors.js";
 import { wwwAuthenticate } from "./protectedResource.js";
 import type { Client, ClientAuthMethod, GrantType } from "./types.js";
 
@@ -109,7 +109,7 @@ export function validateRegistration(
 	name: string;
 } {
 	if (options.enabled !== true) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_client_metadata",
 			"This server does not accept client registrations.",
 		);
@@ -133,7 +133,7 @@ export function validateRegistration(
 			!presented ||
 			!hashMatches(sha256(presentedToken), sha256(options.initialAccessToken))
 		) {
-			throw new OAuthError(
+			throw new E_VISA_OAUTH_ERROR(
 				"invalid_token",
 				"Registration on this server needs a valid initial access token.",
 				{
@@ -152,7 +152,7 @@ export function validateRegistration(
 	// A client using the authorization code flow has somewhere to come back to,
 	// and this is the last moment anyone checks.
 	if (grantTypes.includes("authorization_code") && redirectUris.length === 0) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_redirect_uri",
 			"redirect_uris is required for the authorization_code grant.",
 		);
@@ -163,7 +163,7 @@ export function validateRegistration(
 	const requested = readScope(request.scope);
 	const outside = requested.filter((scope) => !allowed.includes(scope));
 	if (outside.length > 0) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_client_metadata",
 			`This server does not grant ${outside.join(", ")} to a self-registered client.`,
 		);
@@ -224,7 +224,7 @@ function resolveGrants(
 	const grants: GrantType[] = [];
 	for (const grant of requested) {
 		if (!isGrantType(grant) || !allowed.includes(grant)) {
-			throw new OAuthError(
+			throw new E_VISA_OAUTH_ERROR(
 				"invalid_client_metadata",
 				`This server does not allow the ${grant} grant to a self-registered client.`,
 			);
@@ -246,13 +246,13 @@ function assertRedirectUri(value: string): void {
 	try {
 		url = new URL(value);
 	} catch {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_redirect_uri",
 			`${value} is not an absolute URI.`,
 		);
 	}
 	if (url.hash !== "") {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_redirect_uri",
 			`${value} must not carry a fragment.`,
 		);
@@ -263,7 +263,7 @@ function assertRedirectUri(value: string): void {
 		url.hostname === "[::1]" ||
 		url.hostname === "localhost";
 	if (url.protocol === "http:" && loopback) return;
-	throw new OAuthError(
+	throw new E_VISA_OAUTH_ERROR(
 		"invalid_redirect_uri",
 		`${value} must use https, or http on a loopback address.`,
 	);
@@ -273,7 +273,7 @@ function assertRedirectUri(value: string): void {
  * When a secret issued now stops working, or `undefined` for never.
  *
  * The TTL is the deployment's value, not the client's, so a bad one is a
- * configuration mistake and says so — `VisaError`, not an OAuth error the
+ * configuration mistake and says so — `E_VISA_INVALID_SECRET_TTL`, not an OAuth error the
  * caller would read as their own fault. Refused rather than rounded: a
  * fractional or negative TTL means someone intended something this cannot
  * carry out, and a secret quietly issued already-expired (or never expiring)
@@ -285,11 +285,7 @@ export function secretExpiryFor(
 ): Date | undefined {
 	if (ttlSeconds === undefined) return undefined;
 	if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) {
-		throw new VisaError(
-			"E_VISA_INVALID_SECRET_TTL",
-			`registration.secretTtlSeconds must be a positive whole number of seconds; received ${ttlSeconds}.`,
-			{ hint: "Leave it out for a secret that never expires." },
-		);
+		throw new E_VISA_INVALID_SECRET_TTL([ttlSeconds]);
 	}
 	return new Date(issuedAt.getTime() + ttlSeconds * 1000);
 }
@@ -297,7 +293,7 @@ export function secretExpiryFor(
 function readStringList(value: unknown): string[] {
 	if (value === undefined || value === null) return [];
 	if (!Array.isArray(value)) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_client_metadata",
 			"redirect_uris and grant_types must be arrays of strings.",
 		);
@@ -307,7 +303,7 @@ function readStringList(value: unknown): string[] {
 	// redirect uri while the client believed it had registered two, and the
 	// second one silently not working is found much later, by a user.
 	if (value.some((entry) => typeof entry !== "string")) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_client_metadata",
 			"redirect_uris and grant_types must be arrays of strings.",
 		);
@@ -318,7 +314,7 @@ function readStringList(value: unknown): string[] {
 function readScope(value: unknown): string[] {
 	if (value === undefined || value === null) return [];
 	if (typeof value !== "string") {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_client_metadata",
 			"scope must be a space-separated string.",
 		);
@@ -335,7 +331,7 @@ function readAuthMethod(value: unknown): ClientAuthMethod {
 	) {
 		return value;
 	}
-	throw new OAuthError(
+	throw new E_VISA_OAUTH_ERROR(
 		"invalid_client_metadata",
 		`token_endpoint_auth_method ${String(value)} is not supported.`,
 	);

@@ -30,6 +30,9 @@ describe("visa > services/main", () => {
 
 	it("names what to do when it is read before the provider booted", () => {
 		expect(() => visa.issuer).toThrowError(/register VisaProvider/);
+		expect(() => visa.issuer).toThrowError(
+			expect.objectContaining({ code: "E_VISA_NOT_BOOTED" }),
+		);
 	});
 
 	it("binds methods to the seated manager", async () => {

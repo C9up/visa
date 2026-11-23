@@ -14,6 +14,11 @@
  * issuer as a value rather than reading one.
  */
 
+import {
+	E_VISA_INVALID_CHALLENGE_PARAMETER,
+	E_VISA_INVALID_RESOURCE,
+} from "./errors.js";
+
 /** The metadata document, §3.2. Only `resource` is required. */
 export interface ProtectedResourceMetadata {
 	resource: string;
@@ -143,9 +148,7 @@ function quotable(value: string, parameter: string): string {
 			code < 0x20 ||
 			code === 0x7f
 		) {
-			throw new Error(
-				`[visa] ${parameter} cannot go in a WWW-Authenticate header: it holds a quote, a backslash or a control character`,
-			);
+			throw new E_VISA_INVALID_CHALLENGE_PARAMETER([parameter]);
 		}
 	}
 	return value;
@@ -163,9 +166,13 @@ export function assertResourceIdentifier(resource: string): void {
 	try {
 		url = new URL(resource);
 	} catch {
-		throw new Error(`[visa] resource must be an absolute URI: ${resource}`);
+		throw new E_VISA_INVALID_RESOURCE([
+			`[visa] resource must be an absolute URI: ${resource}`,
+		]);
 	}
 	if (url.hash !== "") {
-		throw new Error(`[visa] resource must not carry a fragment: ${resource}`);
+		throw new E_VISA_INVALID_RESOURCE([
+			`[visa] resource must not carry a fragment: ${resource}`,
+		]);
 	}
 }

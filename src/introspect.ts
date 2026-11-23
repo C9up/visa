@@ -9,7 +9,7 @@
 
 import { authenticateClient, type ClientCredentials } from "./clients.js";
 import { hashSecret } from "./crypto.js";
-import { OAuthError } from "./errors.js";
+import { E_VISA_OAUTH_ERROR } from "./errors.js";
 import { audienceAllows } from "./resource.js";
 import type { VisaStore } from "./store.js";
 import type {
@@ -58,7 +58,7 @@ export async function introspect(
 	);
 	const presented = asString(request.token);
 	if (presented === undefined) {
-		throw new OAuthError("invalid_request", "token is required.");
+		throw new E_VISA_OAUTH_ERROR("invalid_request", "token is required.");
 	}
 
 	const hash = hashSecret(presented);
@@ -174,7 +174,7 @@ export async function revoke(
 	);
 	const presented = asString(request.token);
 	if (presented === undefined) {
-		throw new OAuthError("invalid_request", "token is required.");
+		throw new E_VISA_OAUTH_ERROR("invalid_request", "token is required.");
 	}
 	const hash = hashSecret(presented);
 

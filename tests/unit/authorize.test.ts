@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { OAuthError } from "../../src/errors.js";
+import { E_VISA_OAUTH_ERROR } from "../../src/errors.js";
 import { authorizeToCode, harness, pkce, REDIRECT } from "./helpers.js";
 
 describe("visa > authorize > what may be redirected", () => {
@@ -29,7 +29,7 @@ describe("visa > authorize > what may be redirected", () => {
 		);
 		expect(outcome.type).toBe("error");
 		if (outcome.type !== "error") throw new Error("unreachable");
-		expect(outcome.error.code).toBe("invalid_request");
+		expect(outcome.error.oauthCode).toBe("invalid_request");
 	});
 
 	it("refuses an unknown client without redirecting anywhere", async () => {
@@ -458,7 +458,7 @@ describe("visa > authorize > the code itself", () => {
 		).rejects.toBeInstanceOf(Error);
 	});
 
-	it("carries a VisaError, not an OAuthError, for a wiring mistake", async () => {
+	it("carries an E_VISA_* code, not an E_VISA_OAUTH_ERROR, for a wiring mistake", async () => {
 		// Two audiences: one error goes on the wire, the other to whoever
 		// wired the server.
 		const { VisaManager } = await import("../../src/VisaManager.js");
@@ -466,7 +466,15 @@ describe("visa > authorize > the code itself", () => {
 		expect(
 			() => new VisaManager({ issuer: "", store: new MemoryStore() }),
 		).toThrowError(/issuer/);
-		expect(new OAuthError("invalid_grant").toResponse()).toEqual({
+		expect(
+			() => new VisaManager({ issuer: "", store: new MemoryStore() }),
+		).toThrow(
+			expect.objectContaining({
+				code: "E_VISA_MISSING_ISSUER",
+				help: "Set `issuer` in config/visa.ts, e.g. https://auth.example.com",
+			}),
+		);
+		expect(new E_VISA_OAUTH_ERROR("invalid_grant").toResponse()).toEqual({
 			error: "invalid_grant",
 		});
 	});
@@ -535,7 +543,7 @@ describe("visa > authorize > parameters a query parser repeated", () => {
 				);
 				expect(outcome.type, key).toBe("error");
 				if (outcome.type !== "error") throw new Error("unreachable");
-				expect(outcome.error.code, key).toBe("invalid_request");
+				expect(outcome.error.oauthCode, key).toBe("invalid_request");
 			});
 		}
 	}

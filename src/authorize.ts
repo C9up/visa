@@ -14,7 +14,7 @@ import {
 	resolveScopes,
 } from "./clients.js";
 import { hashSecret, randomToken } from "./crypto.js";
-import { OAuthError } from "./errors.js";
+import { E_VISA_OAUTH_ERROR, E_VISA_UNREDIRECTABLE } from "./errors.js";
 import { readResourceParameter, validateResources } from "./resource.js";
 import type { VisaStore } from "./store.js";
 import type { AuthorizationCode, Client } from "./types.js";
@@ -67,21 +67,6 @@ export interface ValidatedRequest {
 	resources: string[];
 }
 
-/**
- * A failure that cannot be redirected — the user must be told directly.
- *
- * Separate from `OAuthError` because the CALLER has to treat it differently:
- * render a page, never `Location:`.
- */
-export class UnredirectableError extends Error {
-	readonly error: OAuthError;
-	constructor(error: OAuthError) {
-		super(error.message);
-		this.name = "UnredirectableError";
-		this.error = error;
-	}
-}
-
 export interface AuthorizeOptions {
 	/** Lifetime of the code. Short on purpose — see `issueAuthorizationCode`. */
 	codeTtlSeconds?: number;
@@ -107,8 +92,8 @@ export interface AuthorizeOptions {
 }
 
 /**
- * Check an authorization request. Throws `UnredirectableError` when the error
- * must not be bounced back, `OAuthError` when it may.
+ * Check an authorization request. Throws `E_VISA_UNREDIRECTABLE` when the error
+ * must not be bounced back, `E_VISA_OAUTH_ERROR` when it may.
  */
 export async function validateAuthorizationRequest(
 	request: UntrustedAuthorizationRequest,
@@ -120,8 +105,8 @@ export async function validateAuthorizationRequest(
 	// `redirect_uri` is one of those, so it is shown, never redirected.
 	const clientId = singleValue(request, "client_id", unredirectable);
 	if (clientId === undefined || clientId === "") {
-		throw new UnredirectableError(
-			new OAuthError("invalid_request", "client_id is required."),
+		throw new E_VISA_UNREDIRECTABLE(
+			new E_VISA_OAUTH_ERROR("invalid_request", "client_id is required."),
 		);
 	}
 	const requestedRedirectUri = singleValue(
@@ -131,8 +116,8 @@ export async function validateAuthorizationRequest(
 	);
 	const client = await store.findClient(clientId);
 	if (client === null) {
-		throw new UnredirectableError(
-			new OAuthError("invalid_request", "Unknown client."),
+		throw new E_VISA_UNREDIRECTABLE(
+			new E_VISA_OAUTH_ERROR("invalid_request", "Unknown client."),
 		);
 	}
 
@@ -151,7 +136,7 @@ export async function validateAuthorizationRequest(
 		redirectable,
 	);
 	if (responseType !== "code") {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			responseType === undefined
 				? "invalid_request"
 				: "unsupported_response_type",
@@ -191,9 +176,9 @@ export async function validateAuthorizationRequest(
 }
 
 /** How a malformed parameter is refused: shown to the user, or redirected. */
-type Refusal = (error: OAuthError) => Error;
+type Refusal = (error: E_VISA_OAUTH_ERROR) => Error;
 
-const unredirectable: Refusal = (error) => new UnredirectableError(error);
+const unredirectable: Refusal = (error) => new E_VISA_UNREDIRECTABLE(error);
 const redirectable: Refusal = (error) => error;
 
 /**
@@ -211,7 +196,7 @@ function singleValue(
 	const value = request[key];
 	if (value === undefined || typeof value === "string") return value;
 	throw refuse(
-		new OAuthError(
+		new E_VISA_OAUTH_ERROR(
 			"invalid_request",
 			`${key} must be given once, as a string.`,
 		),
@@ -233,7 +218,7 @@ function resourceValue(value: unknown): string | string[] | undefined {
 		);
 		if (strings.length === value.length) return strings;
 	}
-	throw new OAuthError(
+	throw new E_VISA_OAUTH_ERROR(
 		"invalid_request",
 		"resource must be one or several strings.",
 	);
@@ -251,15 +236,18 @@ function resolveRedirectUri(
 	client: Client,
 ): string {
 	if (client.redirectUris.length === 0) {
-		throw new UnredirectableError(
-			new OAuthError("invalid_request", "This client has no redirect URI."),
+		throw new E_VISA_UNREDIRECTABLE(
+			new E_VISA_OAUTH_ERROR(
+				"invalid_request",
+				"This client has no redirect URI.",
+			),
 		);
 	}
 	if (requested === undefined || requested === "") {
 		const only = client.redirectUris[0];
 		if (client.redirectUris.length > 1 || only === undefined) {
-			throw new UnredirectableError(
-				new OAuthError(
+			throw new E_VISA_UNREDIRECTABLE(
+				new E_VISA_OAUTH_ERROR(
 					"invalid_request",
 					"redirect_uri is required when a client registers more than one.",
 				),
@@ -268,8 +256,11 @@ function resolveRedirectUri(
 		return only;
 	}
 	if (!redirectUriMatches(requested, client.redirectUris)) {
-		throw new UnredirectableError(
-			new OAuthError("invalid_request", "redirect_uri is not registered."),
+		throw new E_VISA_UNREDIRECTABLE(
+			new E_VISA_OAUTH_ERROR(
+				"invalid_request",
+				"redirect_uri is not registered.",
+			),
 		);
 	}
 	return requested;
@@ -297,10 +288,13 @@ function readChallenge(
 ): { codeChallenge: string; codeChallengeMethod: "S256" | "plain" } {
 	if (challenge === undefined || challenge === "") {
 		// Mandatory in 2.1 for every client, confidential ones included.
-		throw new OAuthError("invalid_request", "code_challenge is required.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_request",
+			"code_challenge is required.",
+		);
 	}
 	if (!isPkceValue(challenge)) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_request",
 			"code_challenge must be 43 to 128 unreserved characters (RFC 7636 §4.2).",
 		);
@@ -311,7 +305,7 @@ function readChallenge(
 	if (method === "plain" && options.allowPlainChallenge === true) {
 		return { codeChallenge: challenge, codeChallengeMethod: "plain" };
 	}
-	throw new OAuthError(
+	throw new E_VISA_OAUTH_ERROR(
 		"invalid_request",
 		"code_challenge_method must be S256.",
 	);
@@ -370,11 +364,11 @@ export function successRedirect(
 /** Build the redirect a refused or failed authorization ends on. */
 export function errorRedirect(
 	redirectUri: string,
-	error: OAuthError,
+	error: E_VISA_OAUTH_ERROR,
 	state?: string,
 ): string {
 	const url = new URL(redirectUri);
-	url.searchParams.set("error", error.code);
+	url.searchParams.set("error", error.oauthCode);
 	if (error.description !== undefined) {
 		url.searchParams.set("error_description", error.description);
 	}

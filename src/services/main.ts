@@ -6,6 +6,7 @@
  * server with no store would mint tokens nobody can verify.
  */
 
+import { E_VISA_NOT_BOOTED } from "../errors.js";
 import type { VisaManager } from "../VisaManager.js";
 
 let instance: VisaManager | undefined;
@@ -33,9 +34,7 @@ export function clearVisa(): void {
 
 function resolve(): VisaManager {
 	if (!instance) {
-		throw new Error(
-			"[visa] accessed before initialization — register VisaProvider, or call setVisa() yourself.",
-		);
+		throw new E_VISA_NOT_BOOTED();
 	}
 	return instance;
 }

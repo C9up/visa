@@ -12,7 +12,6 @@ import {
 	errorRedirect,
 	issueAuthorizationCode,
 	successRedirect,
-	UnredirectableError,
 	type UntrustedAuthorizationRequest,
 	type ValidatedRequest,
 	validateAuthorizationRequest,
@@ -23,7 +22,17 @@ import {
 	redirectUriMatches,
 } from "./clients.js";
 import { hashMatches, hashSecret, randomToken, sha256 } from "./crypto.js";
-import { OAuthError, VisaError } from "./errors.js";
+import {
+	E_VISA_INSECURE_ISSUER,
+	E_VISA_INVALID_INITIAL_ACCESS_TOKEN,
+	E_VISA_INVALID_ISSUER,
+	E_VISA_INVALID_REDIRECT_URI,
+	E_VISA_MISSING_ISSUER,
+	E_VISA_NO_REDIRECT_URI,
+	E_VISA_OAUTH_ERROR,
+	E_VISA_STORE_READ_ONLY,
+	E_VISA_UNREDIRECTABLE,
+} from "./errors.js";
 import {
 	type IntrospectionOptions,
 	introspect,
@@ -94,7 +103,7 @@ export type AuthorizationOutcome =
 	 * Show the user this error. It must NOT be redirected — the redirect URI
 	 * is the thing that failed validation.
 	 */
-	| { type: "error"; error: OAuthError };
+	| { type: "error"; error: E_VISA_OAUTH_ERROR };
 
 export class VisaManager {
 	readonly #config: VisaConfig;
@@ -212,10 +221,10 @@ export class VisaManager {
 				this.#config,
 			);
 		} catch (error) {
-			if (error instanceof UnredirectableError) {
+			if (error instanceof E_VISA_UNREDIRECTABLE) {
 				return { type: "error", error: error.error };
 			}
-			if (error instanceof OAuthError) {
+			if (error instanceof E_VISA_OAUTH_ERROR) {
 				// Redirectable: the URI was verified before this check ran.
 				const uri = await this.#redirectUriFor(request);
 				if (uri === null) return { type: "error", error };
@@ -358,7 +367,10 @@ export class VisaManager {
 			}
 			return validated;
 		} catch (error) {
-			if (error instanceof UnredirectableError || error instanceof OAuthError) {
+			if (
+				error instanceof E_VISA_UNREDIRECTABLE ||
+				error instanceof E_VISA_OAUTH_ERROR
+			) {
 				return null;
 			}
 			throw error;
@@ -369,7 +381,7 @@ export class VisaManager {
 	deny(validated: ValidatedRequest): string {
 		return errorRedirect(
 			validated.redirectUri,
-			new OAuthError("access_denied", "The user refused the request."),
+			new E_VISA_OAUTH_ERROR("access_denied", "The user refused the request."),
 			validated.state,
 		);
 	}
@@ -528,35 +540,26 @@ export class VisaManager {
  */
 function normalizeIssuer(issuer: string): string {
 	if (issuer === undefined || issuer === "") {
-		throw new VisaError(
-			"E_VISA_MISSING_ISSUER",
-			"visa needs an issuer — the public URL this authorization server answers on.",
-			{ hint: "Set `issuer` in config/visa.ts, e.g. https://auth.example.com" },
-		);
+		throw new E_VISA_MISSING_ISSUER();
 	}
 	let url: URL;
 	try {
 		url = new URL(issuer);
 	} catch {
-		throw new VisaError(
-			"E_VISA_INVALID_ISSUER",
-			`visa's issuer is not a URL: ${issuer}`,
-			{ hint: "It is the public origin, e.g. https://auth.example.com" },
+		throw Object.assign(
+			new E_VISA_INVALID_ISSUER([`visa's issuer is not a URL: ${issuer}`]),
+			{ help: "It is the public origin, e.g. https://auth.example.com" },
 		);
 	}
 	if (url.protocol !== "https:" && url.hostname !== "localhost") {
 		// Tokens travel to it. `http://` is for a laptop, and the exception is
 		// named so nobody has to guess whether it applies in production.
-		throw new VisaError(
-			"E_VISA_INSECURE_ISSUER",
-			`visa's issuer must be https (localhost excepted): ${issuer}`,
-		);
+		throw new E_VISA_INSECURE_ISSUER([issuer]);
 	}
 	if (url.hash !== "" || url.search !== "") {
-		throw new VisaError(
-			"E_VISA_INVALID_ISSUER",
+		throw new E_VISA_INVALID_ISSUER([
 			"visa's issuer must carry no query string and no fragment.",
-		);
+		]);
 	}
 	return issuer.replace(/\/+$/, "");
 }
@@ -636,24 +639,12 @@ function assertRegistration(config: VisaConfig): void {
 	if (registration?.enabled !== true) return;
 	if (config.store.saveClient === undefined) throw readOnlyStore();
 	if (registration.initialAccessToken === "") {
-		throw new VisaError(
-			"E_VISA_INVALID_INITIAL_ACCESS_TOKEN",
-			"registration.initialAccessToken is empty, which would accept an empty bearer token.",
-			{
-				hint: "Set a long random value, or leave it out for open registration.",
-			},
-		);
+		throw new E_VISA_INVALID_INITIAL_ACCESS_TOKEN();
 	}
 }
 
-function readOnlyStore(): VisaError {
-	return new VisaError(
-		"E_VISA_STORE_READ_ONLY",
-		"This store cannot register clients; create them where they live.",
-		{
-			hint: "Implement saveClient(client) on the store — MemoryStore and AtlasStore both do.",
-		},
-	);
+function readOnlyStore(): E_VISA_STORE_READ_ONLY {
+	return new E_VISA_STORE_READ_ONLY();
 }
 
 /**
@@ -665,31 +656,27 @@ function readOnlyStore(): VisaError {
  */
 function assertRedirectUris(uris: readonly string[]): void {
 	if (uris.length === 0) {
-		throw new VisaError(
-			"E_VISA_NO_REDIRECT_URI",
-			"A client needs at least one redirect URI.",
-		);
+		throw new E_VISA_NO_REDIRECT_URI();
 	}
 	for (const uri of uris) {
 		let url: URL;
 		try {
 			url = new URL(uri);
 		} catch {
-			throw new VisaError("E_VISA_INVALID_REDIRECT_URI", `Not a URL: ${uri}`, {
-				hint: "Register the complete URI, scheme and path included.",
-			});
+			throw Object.assign(
+				new E_VISA_INVALID_REDIRECT_URI([`Not a URL: ${uri}`]),
+				{ help: "Register the complete URI, scheme and path included." },
+			);
 		}
 		if (url.hash !== "") {
-			throw new VisaError(
-				"E_VISA_INVALID_REDIRECT_URI",
+			throw new E_VISA_INVALID_REDIRECT_URI([
 				`A redirect URI must carry no fragment: ${uri}`,
-			);
+			]);
 		}
 		if (uri.includes("*")) {
-			throw new VisaError(
-				"E_VISA_INVALID_REDIRECT_URI",
+			throw new E_VISA_INVALID_REDIRECT_URI([
 				`Wildcards are not matched, so this would never accept anything: ${uri}`,
-			);
+			]);
 		}
 	}
 }

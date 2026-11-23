@@ -217,6 +217,10 @@ describe("visa > the atlas store", () => {
 			await expect(store.findClient("conf"), String(value)).rejects.toThrow(
 				"[visa] token_endpoint_auth_method is not one of",
 			);
+			await expect(
+				store.findClient("conf"),
+				String(value),
+			).rejects.toMatchObject({ code: "E_VISA_CORRUPT_ROW" });
 			// And the token endpoint stops there instead of authenticating it as
 			// public and going on to look the code up.
 			await expect(
@@ -659,7 +663,7 @@ describe("visa > the client contract, on every shipped store", () => {
 						method: "client_secret_post",
 					},
 				),
-			).rejects.toMatchObject({ code: "invalid_client" });
+			).rejects.toMatchObject({ oauthCode: "invalid_client" });
 		});
 	}
 });

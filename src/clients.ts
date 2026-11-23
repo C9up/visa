@@ -9,7 +9,7 @@
  */
 
 import { secretMatches } from "./crypto.js";
-import { OAuthError } from "./errors.js";
+import { E_VISA_OAUTH_ERROR } from "./errors.js";
 import type { Client, ClientAuthMethod, GrantType } from "./types.js";
 
 /**
@@ -93,7 +93,7 @@ export function readCredentials(input: {
 	const bodySecret = stringOrUndefined(input.body.client_secret);
 
 	if (basic !== undefined && bodySecret !== undefined) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_request",
 			"More than one client authentication method was used.",
 		);
@@ -102,7 +102,7 @@ export function readCredentials(input: {
 		// A body client_id that disagrees with the header is not a mismatch to
 		// resolve — it is two different claims about who is asking.
 		if (bodyId !== undefined && bodyId !== basic.clientId) {
-			throw new OAuthError(
+			throw new E_VISA_OAUTH_ERROR(
 				"invalid_request",
 				"The client_id in the body does not match the one authenticated.",
 			);
@@ -126,7 +126,10 @@ function parseBasic(header?: string): ClientCredentials | undefined {
 	const decoded = Buffer.from(encoded, "base64").toString("utf8");
 	const separator = decoded.indexOf(":");
 	if (separator === -1) {
-		throw new OAuthError("invalid_client", "Malformed Basic credentials.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_client",
+			"Malformed Basic credentials.",
+		);
 	}
 	// RFC 6749 §2.3.1 form-encodes both halves before base64. A malformed
 	// escape throws `URIError`, which would leave the endpoint answering 500
@@ -139,7 +142,10 @@ function parseBasic(header?: string): ClientCredentials | undefined {
 			method: "client_secret_basic",
 		};
 	} catch {
-		throw new OAuthError("invalid_client", "Malformed Basic credentials.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_client",
+			"Malformed Basic credentials.",
+		);
 	}
 }
 
@@ -160,11 +166,17 @@ export async function authenticateClient(
 	now: Date = new Date(),
 ): Promise<Client> {
 	if (credentials.clientId === undefined) {
-		throw new OAuthError("invalid_client", "Client authentication failed.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_client",
+			"Client authentication failed.",
+		);
 	}
 	const client = await load(credentials.clientId);
 	if (client === null) {
-		throw new OAuthError("invalid_client", "Client authentication failed.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_client",
+			"Client authentication failed.",
+		);
 	}
 
 	// The registered method is the only one accepted. Checked before the
@@ -173,7 +185,10 @@ export async function authenticateClient(
 		credentials.method !== undefined &&
 		credentials.method !== client.tokenEndpointAuthMethod
 	) {
-		throw new OAuthError("invalid_client", "Client authentication failed.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_client",
+			"Client authentication failed.",
+		);
 	}
 
 	if (client.tokenEndpointAuthMethod === "none") {
@@ -181,7 +196,10 @@ export async function authenticateClient(
 		// secret here would let one be registered as public and used as
 		// confidential, which is a downgrade the client chooses.
 		if (credentials.clientSecret !== undefined) {
-			throw new OAuthError("invalid_client", "Client authentication failed.");
+			throw new E_VISA_OAUTH_ERROR(
+				"invalid_client",
+				"Client authentication failed.",
+			);
 		}
 		return client;
 	}
@@ -191,7 +209,10 @@ export async function authenticateClient(
 		client.secretHash === undefined ||
 		!secretMatches(credentials.clientSecret, client.secretHash)
 	) {
-		throw new OAuthError("invalid_client", "Client authentication failed.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_client",
+			"Client authentication failed.",
+		);
 	}
 
 	// Registration may have answered `client_secret_expires_at`. This is where
@@ -200,7 +221,10 @@ export async function authenticateClient(
 	// Every endpoint that authenticates a client — token, introspection,
 	// revocation — arrives here, so one check covers all three.
 	if (client.secretExpiresAt !== undefined && client.secretExpiresAt <= now) {
-		throw new OAuthError("invalid_client", "Client authentication failed.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_client",
+			"Client authentication failed.",
+		);
 	}
 	return client;
 }
@@ -208,7 +232,7 @@ export async function authenticateClient(
 /** Is this grant one the client was registered for? */
 export function assertGrantAllowed(client: Client, grant: GrantType): void {
 	if (client.grantTypes.includes(grant)) return;
-	throw new OAuthError(
+	throw new E_VISA_OAUTH_ERROR(
 		"unauthorized_client",
 		`This client may not use the ${grant} grant.`,
 	);
@@ -232,7 +256,7 @@ export function resolveScopes(
 	const asked = requested.split(/\s+/).filter((scope) => scope !== "");
 	const unknown = asked.filter((scope) => !client.scopes.includes(scope));
 	if (unknown.length > 0) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_scope",
 			`Not registered for: ${unknown.join(" ")}`,
 		);

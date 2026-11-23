@@ -574,6 +574,9 @@ describe("visa > provider", () => {
 		const provider = new VisaProvider(blind);
 		provider.register();
 		await expect(provider.boot()).rejects.toThrow(/config\/visa\.ts/);
+		await expect(provider.boot()).rejects.toMatchObject({
+			code: "E_VISA_MISSING_CONFIG",
+		});
 	});
 
 	it("serves no endpoint on a host with no router", async () => {

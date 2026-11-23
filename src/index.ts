@@ -18,7 +18,6 @@ export {
 	errorRedirect,
 	issueAuthorizationCode,
 	successRedirect,
-	UnredirectableError,
 	type UntrustedAuthorizationRequest,
 	type ValidatedRequest,
 	validateAuthorizationRequest,
@@ -33,16 +32,14 @@ export {
 } from "./clients.js";
 export { defineConfig, type VisaConfigInput } from "./config.js";
 export { hashSecret, randomToken, secretMatches, sha256 } from "./crypto.js";
-export {
-	type AuthorizationErrorCode,
-	type BearerErrorCode,
-	OAuthError,
-	type ProtocolErrorCode,
-	type RegistrationErrorCode,
-	type TokenErrorCode,
-	UnauthorizedAccessError,
-	VisaError,
+export type {
+	AuthorizationErrorCode,
+	BearerErrorCode,
+	ProtocolErrorCode,
+	RegistrationErrorCode,
+	TokenErrorCode,
 } from "./errors.js";
+export * as errors from "./errors.js";
 export {
 	type GuardClientResponse,
 	type GuardResult,

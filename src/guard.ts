@@ -21,7 +21,11 @@
  */
 
 import { hashSecret, randomToken } from "./crypto.js";
-import { UnauthorizedAccessError } from "./errors.js";
+import {
+	E_UNAUTHORIZED_ACCESS,
+	E_VISA_CREDENTIALS_UNSUPPORTED,
+	E_VISA_NO_TOKEN_CLIENT,
+} from "./errors.js";
 import { verifyAccessToken } from "./introspect.js";
 import { wwwAuthenticate } from "./protectedResource.js";
 import type { VisaStore } from "./store.js";
@@ -139,9 +143,7 @@ export class VisaAccessToken {
 	 */
 	authorize(ability: string): void {
 		if (this.allows(ability)) return;
-		throw new UnauthorizedAccessError(
-			`Access denied: the token does not carry "${ability}"`,
-		);
+		throw new E_UNAUTHORIZED_ACCESS([ability]);
 	}
 
 	/** A token with no expiry never expires. */
@@ -254,9 +256,7 @@ export class VisaGuard {
 	 * must not produce the same 401.
 	 */
 	async authenticate(): Promise<GuardResult> {
-		throw new Error(
-			"visa authenticates a bearer token, not credentials. Use verify() with the access token.",
-		);
+		throw new E_VISA_CREDENTIALS_UNSUPPORTED();
 	}
 
 	/**
@@ -274,9 +274,7 @@ export class VisaGuard {
 	): Promise<VisaAccessToken> {
 		const clientId = this.#config.tokenClientId;
 		if (clientId === undefined) {
-			throw new Error(
-				"[visa] createToken needs `tokenClientId` — a token is always issued to a client. Name the first-party application in visaGuard({ tokenClientId }).",
-			);
+			throw new E_VISA_NO_TOKEN_CLIENT();
 		}
 		const userId = typeof user === "string" ? user : user.id;
 		const ttl =

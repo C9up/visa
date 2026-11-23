@@ -68,6 +68,9 @@ describe("visa > protected resource metadata", () => {
 		expect(() => protectedResourceMetadata({ resource: "/mcp" })).toThrow(
 			/absolute URI/,
 		);
+		expect(() => protectedResourceMetadata({ resource: "/mcp" })).toThrow(
+			expect.objectContaining({ code: "E_VISA_INVALID_RESOURCE" }),
+		);
 	});
 
 	it("refuses a resource identifier carrying a fragment", () => {
@@ -75,6 +78,9 @@ describe("visa > protected resource metadata", () => {
 		expect(() =>
 			protectedResourceMetadata({ resource: "https://api.example/mcp#x" }),
 		).toThrow(/fragment/);
+		expect(() =>
+			protectedResourceMetadata({ resource: "https://api.example/mcp#x" }),
+		).toThrow(expect.objectContaining({ code: "E_VISA_INVALID_RESOURCE" }));
 	});
 });
 
@@ -116,6 +122,9 @@ describe("visa > the WWW-Authenticate challenge", () => {
 		).toThrow(/WWW-Authenticate/);
 		expect(() => wwwAuthenticate({ errorDescription: "line\nbreak" })).toThrow(
 			/WWW-Authenticate/,
+		);
+		expect(() => wwwAuthenticate({ errorDescription: "line\nbreak" })).toThrow(
+			expect.objectContaining({ code: "E_VISA_INVALID_CHALLENGE_PARAMETER" }),
 		);
 	});
 });

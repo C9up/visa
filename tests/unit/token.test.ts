@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import { hashSecret } from "../../src/crypto.js";
-import { OAuthError } from "../../src/errors.js";
+import { E_VISA_OAUTH_ERROR } from "../../src/errors.js";
 import type { TokenResponse } from "../../src/types.js";
 import {
 	authorizeToCode,
@@ -91,7 +91,7 @@ describe("visa > token > the authorization code grant", () => {
 		const first = await exchange(h, body);
 
 		await expect(exchange(h, body)).rejects.toMatchObject({
-			code: "invalid_grant",
+			oauthCode: "invalid_grant",
 		});
 		// What the first exchange minted is gone too.
 		expect(await h.visa.verify(first.access_token)).toBeNull();
@@ -109,7 +109,7 @@ describe("visa > token > the authorization code grant", () => {
 				redirect_uri: REDIRECT,
 				code_verifier: pkce().verifier,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 
 		await expect(
 			exchange(h, {
@@ -117,7 +117,7 @@ describe("visa > token > the authorization code grant", () => {
 				code,
 				redirect_uri: REDIRECT,
 			}),
-		).rejects.toMatchObject({ code: "invalid_request" });
+		).rejects.toMatchObject({ oauthCode: "invalid_request" });
 	});
 
 	it("refuses a redirect URI that is not the one the code was issued for", async () => {
@@ -148,7 +148,7 @@ describe("visa > token > the authorization code grant", () => {
 				redirect_uri: "https://app.example.test/other",
 				code_verifier: verifier,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 	});
 
 	it("exchanges a code without redirect_uri when the authorization request had none", async () => {
@@ -202,7 +202,7 @@ describe("visa > token > the authorization code grant", () => {
 				redirect_uri: "https://app.example.test/other",
 				code_verifier: verifier,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 	});
 
 	it("refuses an exchange without redirect_uri when the authorization request carried it", async () => {
@@ -218,7 +218,7 @@ describe("visa > token > the authorization code grant", () => {
 				code,
 				code_verifier: verifier,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 	});
 
 	it("refuses a code that belongs to another client", async () => {
@@ -243,7 +243,7 @@ describe("visa > token > the authorization code grant", () => {
 				redirect_uri: REDIRECT,
 				code_verifier: verifier,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 		void second;
 	});
 
@@ -264,7 +264,7 @@ describe("visa > token > the authorization code grant", () => {
 				h.visa.readCredentials({ ...basic(h), body: {} }),
 				later,
 			),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 	});
 
 	it("says the same sentence for every way a code can be wrong", async () => {
@@ -281,7 +281,9 @@ describe("visa > token > the authorization code grant", () => {
 					code_verifier: pkce().verifier,
 				});
 			} catch (error) {
-				failures.push(error instanceof OAuthError ? error.message : "other");
+				failures.push(
+					error instanceof E_VISA_OAUTH_ERROR ? error.message : "other",
+				);
 			}
 		}
 		// The empty one fails on a missing parameter, which is not a secret.
@@ -312,7 +314,7 @@ describe("visa > token > the PKCE verifier format (RFC 7636 §4.1)", () => {
 				redirect_uri: REDIRECT,
 				code_verifier: "a",
 			}),
-		).rejects.toMatchObject({ code: "invalid_request" });
+		).rejects.toMatchObject({ oauthCode: "invalid_request" });
 	});
 
 	it("refuses a verifier that is too long or carries a character outside the set", async () => {
@@ -327,7 +329,7 @@ describe("visa > token > the PKCE verifier format (RFC 7636 §4.1)", () => {
 					redirect_uri: REDIRECT,
 					code_verifier: bad,
 				}),
-			).rejects.toMatchObject({ code: "invalid_request" });
+			).rejects.toMatchObject({ oauthCode: "invalid_request" });
 		}
 		// The code was never consumed by the malformed attempts.
 		const response = await exchange(h, {
@@ -378,7 +380,7 @@ describe("visa > token > refresh rotation", () => {
 				grant_type: "refresh_token",
 				refresh_token: first.refresh_token,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 
 		// The legitimate holder's current tokens are gone as well.
 		await expect(
@@ -386,7 +388,7 @@ describe("visa > token > refresh rotation", () => {
 				grant_type: "refresh_token",
 				refresh_token: second.refresh_token,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 		expect(await h.visa.verify(second.access_token)).toBeNull();
 	});
 
@@ -421,7 +423,7 @@ describe("visa > token > refresh rotation", () => {
 				refresh_token: narrowed.refresh_token,
 				scope: "profile email openid",
 			}),
-		).rejects.toMatchObject({ code: "invalid_scope" });
+		).rejects.toMatchObject({ oauthCode: "invalid_scope" });
 	});
 
 	it("narrows only the access token: the rotated refresh token keeps the grant (RFC 6749 §6)", async () => {
@@ -485,7 +487,7 @@ describe("visa > token > refresh rotation", () => {
 				grant_type: "refresh_token",
 				refresh_token: pair.refresh_token,
 			}),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		).rejects.toMatchObject({ oauthCode: "invalid_grant" });
 	});
 });
 
@@ -514,7 +516,7 @@ describe("visa > token > client credentials", () => {
 				{ grant_type: "client_credentials" },
 				{ clientId: h.client.id },
 			),
-		).rejects.toMatchObject({ code: "unauthorized_client" });
+		).rejects.toMatchObject({ oauthCode: "unauthorized_client" });
 	});
 });
 
@@ -523,14 +525,14 @@ describe("visa > token > grants and clients", () => {
 		const h = await harness({ grantTypes: ["authorization_code"] });
 		await expect(
 			exchange(h, { grant_type: "client_credentials" }),
-		).rejects.toMatchObject({ code: "unauthorized_client" });
+		).rejects.toMatchObject({ oauthCode: "unauthorized_client" });
 	});
 
 	it("names the grants OAuth 2.1 removed", async () => {
 		const h = await harness();
 		for (const grant of ["password", "implicit"]) {
 			await expect(exchange(h, { grant_type: grant })).rejects.toMatchObject({
-				code: "unsupported_grant_type",
+				oauthCode: "unsupported_grant_type",
 			});
 		}
 	});
@@ -541,16 +543,16 @@ describe("visa > token > grants and clients", () => {
 
 		await expect(
 			h.visa.token(body, { clientId: h.client.id, clientSecret: "wrong" }),
-		).rejects.toMatchObject({ code: "invalid_client", status: 401 });
+		).rejects.toMatchObject({ oauthCode: "invalid_client", status: 401 });
 
 		await expect(
 			h.visa.token(body, { clientId: h.client.id }),
-		).rejects.toMatchObject({ code: "invalid_client" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client" });
 
 		const open = await harness({ id: "spa", tokenEndpointAuthMethod: "none" });
 		await expect(
 			open.visa.token(body, { clientId: "spa", clientSecret: "invented" }),
-		).rejects.toMatchObject({ code: "invalid_client" });
+		).rejects.toMatchObject({ oauthCode: "invalid_client" });
 	});
 
 	it("refuses two authentication methods in one request", async () => {

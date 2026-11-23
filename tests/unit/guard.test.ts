@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { hashSecret } from "../../src/crypto.js";
-import { UnauthorizedAccessError } from "../../src/errors.js";
+import { E_UNAUTHORIZED_ACCESS } from "../../src/errors.js";
 import { type GuardStore, type GuardUser, visaGuard } from "../../src/guard.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 
@@ -191,7 +191,7 @@ describe("visa > the guard", () => {
 		}
 		// A class an exception handler can match with `instanceof`, carrying
 		// the upstream id and the status a missing scope answers with.
-		expect(thrown).toBeInstanceOf(UnauthorizedAccessError);
+		expect(thrown).toBeInstanceOf(E_UNAUTHORIZED_ACCESS);
 		expect(thrown).toMatchObject({
 			code: "E_UNAUTHORIZED_ACCESS",
 			status: 403,
@@ -307,6 +307,9 @@ describe("visa > the guard", () => {
 		// matters: a bearer guard handed a password is a misconfigured app, not a
 		// bad credential, and the two must not produce the same 401.
 		await expect(guard().authenticate()).rejects.toThrow(/bearer token/i);
+		await expect(guard().authenticate()).rejects.toMatchObject({
+			code: "E_VISA_CREDENTIALS_UNSUPPORTED",
+		});
 	});
 
 	it("mints a token for a user, as upstream's guard does", async () => {
@@ -337,6 +340,9 @@ describe("visa > the guard", () => {
 		await expect(guard().createToken("user-7")).rejects.toThrow(
 			/tokenClientId/,
 		);
+		await expect(guard().createToken("user-7")).rejects.toMatchObject({
+			code: "E_VISA_NO_TOKEN_CLIENT",
+		});
 	});
 
 	it("gives a minted token every ability by default", async () => {

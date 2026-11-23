@@ -14,7 +14,7 @@ import {
 	resolveScopes,
 } from "./clients.js";
 import { hashMatches, hashSecret, randomToken, sha256 } from "./crypto.js";
-import { OAuthError } from "./errors.js";
+import { E_VISA_OAUTH_ERROR } from "./errors.js";
 import {
 	narrowResources,
 	readResourceParameter,
@@ -50,7 +50,7 @@ export async function token(
 ): Promise<TokenResponse> {
 	const grant = asString(request.grant_type);
 	if (grant === undefined) {
-		throw new OAuthError("invalid_request", "grant_type is required.");
+		throw new E_VISA_OAUTH_ERROR("invalid_request", "grant_type is required.");
 	}
 	// Authenticate BEFORE looking at the grant: an unknown grant from an
 	// unauthenticated caller must not be distinguishable from an unknown grant
@@ -60,7 +60,7 @@ export async function token(
 	);
 
 	if (!isKnownGrant(grant)) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"unsupported_grant_type",
 			grant === "password" || grant === "implicit"
 				? `The ${grant} grant was removed in OAuth 2.1.`
@@ -105,16 +105,19 @@ async function exchangeCode(
 	const code = asString(request.code);
 	const verifier = asString(request.code_verifier);
 	if (code === undefined) {
-		throw new OAuthError("invalid_request", "code is required.");
+		throw new E_VISA_OAUTH_ERROR("invalid_request", "code is required.");
 	}
 	if (verifier === undefined) {
-		throw new OAuthError("invalid_request", "code_verifier is required.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_request",
+			"code_verifier is required.",
+		);
 	}
 	// Before the code is looked up: a malformed verifier is a malformed
 	// request, and it must not reach the comparison — a `plain` challenge
 	// stored before the format was enforced would otherwise still match it.
 	if (!isPkceValue(verifier)) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_request",
 			"code_verifier must be 43 to 128 unreserved characters (RFC 7636 §4.1).",
 		);
@@ -123,7 +126,10 @@ async function exchangeCode(
 	const record = await store.findAuthorizationCode(hashSecret(code));
 	// One sentence for every failure below: "no such code", "expired",
 	// "already used" and "wrong client" are indistinguishable to the caller.
-	const invalid = new OAuthError("invalid_grant", "The code is not valid.");
+	const invalid = new E_VISA_OAUTH_ERROR(
+		"invalid_grant",
+		"The code is not valid.",
+	);
 	if (record === null || record.clientId !== client.id) throw invalid;
 	if (record.expiresAt <= now) throw invalid;
 
@@ -220,10 +226,13 @@ async function exchangeRefresh(
 ): Promise<TokenResponse> {
 	const presented = asString(request.refresh_token);
 	if (presented === undefined) {
-		throw new OAuthError("invalid_request", "refresh_token is required.");
+		throw new E_VISA_OAUTH_ERROR(
+			"invalid_request",
+			"refresh_token is required.",
+		);
 	}
 	const record = await store.findRefreshToken(hashSecret(presented));
-	const invalid = new OAuthError(
+	const invalid = new E_VISA_OAUTH_ERROR(
 		"invalid_grant",
 		"The refresh token is not valid.",
 	);
@@ -279,7 +288,7 @@ function narrow(requested: string, granted: readonly string[]): string[] {
 	const asked = requested.split(/\s+/).filter((scope) => scope !== "");
 	const extra = asked.filter((scope) => !granted.includes(scope));
 	if (extra.length > 0) {
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"invalid_scope",
 			`Not part of the original grant: ${extra.join(" ")}`,
 		);
@@ -304,7 +313,7 @@ async function clientCredentials(
 	if (client.tokenEndpointAuthMethod === "none") {
 		// A public client has no secret, so "the client itself" is anyone who
 		// read its id out of a browser.
-		throw new OAuthError(
+		throw new E_VISA_OAUTH_ERROR(
 			"unauthorized_client",
 			"A public client cannot use the client_credentials grant.",
 		);
