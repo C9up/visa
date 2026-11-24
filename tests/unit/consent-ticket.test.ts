@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { defineConfig } from "../../src/config.js";
+import { errors } from "../../src/index.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 import type { AuthorizationCode } from "../../src/types.js";
 import { type ConsentTicket, VisaManager } from "../../src/VisaManager.js";
@@ -224,5 +226,91 @@ describe("visa > consent tickets", () => {
 			"https://calendar.example/api",
 			"https://files.example/api",
 		]);
+	});
+});
+
+describe("visa > consentTicketTtlSeconds", () => {
+	async function ticketUnder(
+		visa: VisaManager,
+		now: Date,
+	): Promise<ConsentTicket> {
+		await visa.registerClient({
+			id: "app",
+			name: "App",
+			redirectUris: [REDIRECT],
+			scopes: ["profile"],
+		});
+		const outcome = await visa.authorize(
+			{
+				response_type: "code",
+				client_id: "app",
+				redirect_uri: REDIRECT,
+				code_challenge: pkce().challenge,
+				code_challenge_method: "S256",
+				scope: "profile",
+			},
+			"user-7",
+		);
+		if (outcome.type !== "consent") throw new Error(outcome.type);
+		return visa.consentTicket(outcome.request, "user-7", now);
+	}
+
+	it("sets how long a consent page may stay open, from config/visa.ts", async () => {
+		const config = defineConfig({
+			issuer: ISSUER,
+			store: new MemoryStore(),
+			consentTicketTtlSeconds: 60,
+		});
+		const visa = new VisaManager(config);
+		const now = new Date("2026-01-01T00:00:00Z");
+		const ticket = await ticketUnder(visa, now);
+
+		expect(ticket.expiresAt).toBe(now.getTime() + 60_000);
+		const justBefore = new Date(now.getTime() + 59_999);
+		expect(
+			await visa.redeemConsentTicket(ticket, ticket.id, "user-7", justBefore),
+		).not.toBeNull();
+		const atExpiry = new Date(now.getTime() + 60_000);
+		expect(
+			await visa.redeemConsentTicket(ticket, ticket.id, "user-7", atExpiry),
+		).toBeNull();
+	});
+
+	it("defaults to ten minutes", async () => {
+		const visa = new VisaManager({ issuer: ISSUER, store: new MemoryStore() });
+		const now = new Date("2026-01-01T00:00:00Z");
+		const ticket = await ticketUnder(visa, now);
+
+		expect(ticket.expiresAt).toBe(now.getTime() + 600_000);
+	});
+
+	it("refuses at boot a lifetime that is not a positive whole number of seconds", () => {
+		const options = [
+			"accessTokenTtlSeconds",
+			"refreshTokenTtlSeconds",
+			"codeTtlSeconds",
+			"consentTicketTtlSeconds",
+		] as const;
+		for (const option of options) {
+			for (const ttl of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+				let caught: unknown;
+				try {
+					new VisaManager({
+						issuer: ISSUER,
+						store: new MemoryStore(),
+						[option]: ttl,
+					});
+				} catch (error) {
+					caught = error;
+				}
+				expect(caught, `${option}=${ttl}`).toBeInstanceOf(
+					errors.E_VISA_INVALID_TTL,
+				);
+				expect(caught).toMatchObject({
+					code: "E_VISA_INVALID_TTL",
+					message: `${option} must be a positive whole number of seconds; received ${ttl}.`,
+				});
+			}
+		}
 	});
 });

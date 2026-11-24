@@ -190,6 +190,8 @@ export default class VisaProvider {
 					"client_secret_post",
 					"none",
 				],
+				// RFC 9207 §3: every authorization response carries `iss`.
+				authorization_response_iss_parameter_supported: true,
 			});
 		});
 

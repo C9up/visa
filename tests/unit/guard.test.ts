@@ -345,6 +345,62 @@ describe("visa > the guard", () => {
 		});
 	});
 
+	it("refuses a lifetime that is not a positive whole number of seconds", async () => {
+		// `Number(env.get('TTL'))` with the variable unset: a token minted
+		// under it would carry an Invalid Date, which no expiry check reads as
+		// past.
+		for (const ttl of [Number.NaN, Number.POSITIVE_INFINITY, 0, -60, 1.5]) {
+			expect(() =>
+				visaGuard({
+					store: memory,
+					findUser,
+					tokenClientId: "first-party",
+					expiresInSeconds: ttl,
+				}),
+			).toThrow(expect.objectContaining({ code: "E_VISA_INVALID_TTL" }));
+		}
+
+		const minting = visaGuard({
+			store: memory,
+			findUser,
+			tokenClientId: "first-party",
+		});
+		for (const ttl of [Number.NaN, Number.POSITIVE_INFINITY, 0, -60, 1.5]) {
+			await expect(
+				minting.createToken("user-7", ["*"], { expiresInSeconds: ttl }),
+			).rejects.toMatchObject({ code: "E_VISA_INVALID_TTL" });
+			await expect(
+				minting.authenticateAsClient("user-7", ["*"], {
+					expiresInSeconds: ttl,
+				}),
+			).rejects.toMatchObject({ code: "E_VISA_INVALID_TTL" });
+		}
+		// Nothing was written for a refused lifetime.
+		expect(await memory.listAccessTokens("user-7")).toEqual([]);
+	});
+
+	it("mints a token that expires when the lifetime says", async () => {
+		const minting = visaGuard({
+			store: memory,
+			findUser,
+			tokenClientId: "first-party",
+			expiresInSeconds: 120,
+		});
+		const before = Date.now();
+
+		const fromConfig = await minting.createToken("user-7");
+		const perCall = await minting.createToken("user-7", ["*"], {
+			expiresInSeconds: 30,
+		});
+
+		const configured = fromConfig.expiresAt?.getTime() ?? 0;
+		expect(configured - before).toBeGreaterThanOrEqual(120_000);
+		expect(configured - before).toBeLessThan(121_000);
+		const called = perCall.expiresAt?.getTime() ?? 0;
+		expect(called - before).toBeGreaterThanOrEqual(30_000);
+		expect(called - before).toBeLessThan(31_000);
+	});
+
 	it("gives a minted token every ability by default", async () => {
 		const minting = visaGuard({
 			store: memory,

@@ -172,16 +172,14 @@ describe("visa > dynamic client registration", () => {
 		).resolves.toMatchObject({ id: created.client_id });
 	});
 
-	it("refuses a TTL that is not a whole number of seconds", async () => {
+	it("refuses a TTL that is not a whole number of seconds, at boot", () => {
 		// A deployment's value, not a caller's, so it says so as a config error
-		// rather than blaming the client. Rounding it would issue a secret that
-		// expires at a time nobody chose.
+		// when the server starts rather than blaming the first client. Rounding
+		// it would issue a secret that expires at a time nobody chose.
 		for (const ttl of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-			await expect(
-				server({ enabled: true, secretTtlSeconds: ttl }).register({
-					redirect_uris: [CALLBACK],
-				}),
-			).rejects.toMatchObject({ code: "E_VISA_INVALID_SECRET_TTL" });
+			expect(() => server({ enabled: true, secretTtlSeconds: ttl })).toThrow(
+				expect.objectContaining({ code: "E_VISA_INVALID_SECRET_TTL" }),
+			);
 		}
 	});
 

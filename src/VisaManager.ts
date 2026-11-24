@@ -18,6 +18,7 @@ import {
 } from "./authorize.js";
 import {
 	type ClientCredentials,
+	consentRequired,
 	readCredentials,
 	redirectUriMatches,
 } from "./clients.js";
@@ -49,6 +50,7 @@ import {
 } from "./register.js";
 import type { VisaStore } from "./store.js";
 import { type TokenOptions, token } from "./token.js";
+import { assertTtlSeconds } from "./ttl.js";
 import type {
 	AuthorizedApplication,
 	Client,
@@ -113,6 +115,7 @@ export class VisaManager {
 		// with a broken issuer answers every metadata fetch with something no
 		// client can use, and says so nowhere.
 		this.#config = { ...config, issuer: normalizeIssuer(config.issuer) };
+		assertTtls(config);
 		assertRegistration(config);
 	}
 
@@ -232,11 +235,11 @@ export class VisaManager {
 					type: "redirect",
 					// Echoed only when it is one string: a repeated `state` may be
 					// the very parameter that was refused.
-					url: errorRedirect(
-						uri,
-						error,
-						typeof request.state === "string" ? request.state : undefined,
-					),
+					url: errorRedirect(uri, error, {
+						issuer: this.issuer,
+						state:
+							typeof request.state === "string" ? request.state : undefined,
+					}),
 				};
 			}
 			throw error;
@@ -254,7 +257,14 @@ export class VisaManager {
 			consent !== null &&
 			validated.scopes.every((scope) => consent.scopes.includes(scope));
 		const forced = request.prompt === "consent";
-		if (validated.client.trusted !== true && (!covered || forced)) {
+		if (
+			consentRequired({
+				client: validated.client,
+				redirectUri: validated.redirectUri,
+				covered,
+				forced,
+			})
+		) {
 			return { type: "consent", request: validated };
 		}
 
@@ -285,7 +295,7 @@ export class VisaManager {
 			this.#config,
 			now,
 		);
-		return successRedirect(validated, code);
+		return successRedirect(validated, code, this.issuer);
 	}
 
 	/**
@@ -382,7 +392,7 @@ export class VisaManager {
 		return errorRedirect(
 			validated.redirectUri,
 			new E_VISA_OAUTH_ERROR("access_denied", "The user refused the request."),
-			validated.state,
+			{ issuer: this.issuer, state: validated.state },
 		);
 	}
 
@@ -627,6 +637,16 @@ function readTicketRequest(value: unknown): AuthorizationRequest | null {
 }
 
 /**
+ * Every lifetime the config sets, checked at boot — see {@link assertTtlSeconds}.
+ */
+function assertTtls(config: VisaConfig): void {
+	assertTtlSeconds("accessTokenTtlSeconds", config.accessTokenTtlSeconds);
+	assertTtlSeconds("refreshTokenTtlSeconds", config.refreshTokenTtlSeconds);
+	assertTtlSeconds("codeTtlSeconds", config.codeTtlSeconds);
+	assertTtlSeconds("consentTicketTtlSeconds", config.consentTicketTtlSeconds);
+}
+
+/**
  * Registration that can actually register, checked at boot.
  *
  * Both failures would otherwise surface on the first `POST /register`: a store
@@ -641,6 +661,9 @@ function assertRegistration(config: VisaConfig): void {
 	if (registration.initialAccessToken === "") {
 		throw new E_VISA_INVALID_INITIAL_ACCESS_TOKEN();
 	}
+	// At boot like the other lifetimes, not at the first registration: a
+	// broken value would otherwise surface only when a client tries to sign up.
+	secretExpiryFor(new Date(0), registration.secretTtlSeconds);
 }
 
 function readOnlyStore(): E_VISA_STORE_READ_ONLY {

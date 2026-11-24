@@ -59,6 +59,64 @@ function isLoopback(hostname: string): boolean {
 	return hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
 
+/**
+ * Does delivering a code to this redirect URI prove WHICH application gets it?
+ *
+ * Only an `https` URI on a host that is not this machine: the code lands on a
+ * server whose name the client owns. A loopback redirect is any program on the
+ * machine that can open a port (RFC 8252 §7.3 lets the port vary, and a fixed
+ * port is free whenever the real app is not running); a private-use scheme
+ * (`com.example.app:/cb`) is whichever app claimed that scheme last (RFC 8252
+ * §8.6: "it is not possible to rely on the redirect URI to verify the
+ * client's identity").
+ */
+export function redirectProvesClientIdentity(redirectUri: string): boolean {
+	let url: URL;
+	try {
+		url = new URL(redirectUri);
+	} catch {
+		return false;
+	}
+	if (url.protocol !== "https:") return false;
+	const host = url.hostname.toLowerCase();
+	return !(
+		isLoopback(host) ||
+		host === "localhost" ||
+		host.endsWith(".localhost")
+	);
+}
+
+/**
+ * May this request be answered without showing the user a consent screen?
+ *
+ * RFC 8252 §8.6 and RFC 6749 §10.2: a server SHOULD NOT approve automatically
+ * — a remembered consent included — "except when the identity of the client
+ * can be assured". A confidential client proves it at the token endpoint; a
+ * public one only through where the code lands. A public client whose redirect
+ * proves nothing (loopback, private-use scheme) is shown the screen every
+ * time, `trusted` or not: otherwise any other program on the machine that
+ * presents its `client_id`, with its own PKCE pair and its own port, gets the
+ * user's tokens without the user seeing anything.
+ */
+export function consentRequired(input: {
+	client: Client;
+	redirectUri: string;
+	/** A remembered consent already covers every requested scope. */
+	covered: boolean;
+	/** The request carried `prompt=consent`. */
+	forced: boolean;
+}): boolean {
+	const { client } = input;
+	if (
+		client.tokenEndpointAuthMethod === "none" &&
+		!redirectProvesClientIdentity(input.redirectUri)
+	) {
+		return true;
+	}
+	if (client.trusted === true) return false;
+	return !input.covered || input.forced;
+}
+
 /** Credentials as they arrived, from either place the spec allows. */
 export interface ClientCredentials {
 	clientId?: string;

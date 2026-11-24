@@ -209,6 +209,20 @@ export class E_VISA_INVALID_SECRET_TTL extends createError<[ttl: unknown]>(
 	static override help = "Leave it out for a secret that never expires.";
 }
 
+/**
+ * A lifetime (`accessTokenTtlSeconds`, `refreshTokenTtlSeconds`,
+ * `codeTtlSeconds`, `consentTicketTtlSeconds` in the config, the guard's
+ * `expiresInSeconds`) is not a positive whole number of seconds.
+ */
+export class E_VISA_INVALID_TTL extends createError<
+	[option: string, ttl: unknown]
+>(
+	"%s must be a positive whole number of seconds; received %s.",
+	"E_VISA_INVALID_TTL",
+) {
+	static override help = "Leave it out to keep the default lifetime.";
+}
+
 /** `VisaProvider` found no `config/visa.ts`. */
 export const E_VISA_MISSING_CONFIG = createError(
 	"[visa] no `config/visa.ts` — run `ream configure @c9up/visa`.",

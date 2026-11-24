@@ -350,12 +350,19 @@ export class AtlasStore implements VisaStore {
 		};
 	}
 
-	/** Same one-statement guarantee as a code: rotation depends on it. */
+	/**
+	 * Same one-statement guarantee as a code: rotation depends on it.
+	 *
+	 * Guarded by `revoked_at IS NULL` too, in the same statement: a revocation
+	 * that lands between the token endpoint's read and this write must stop
+	 * the rotation, not be outrun by it.
+	 */
 	async consumeRefreshToken(tokenHash: string, at: Date): Promise<boolean> {
 		const result = await this.#db
 			.from(this.#tables.refreshTokens)
 			.where({ token_hash: tokenHash })
 			.whereNull("consumed_at")
+			.whereNull("revoked_at")
 			.update({ consumed_at: at });
 		return affected(result) === 1;
 	}

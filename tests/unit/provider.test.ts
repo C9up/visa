@@ -166,6 +166,8 @@ describe("visa > provider", () => {
 		expect(recorded.body).toMatchObject({
 			issuer,
 			token_endpoint: `${issuer}/oauth/token`,
+			// RFC 9207 §3: the client is told to expect `iss` on the redirect.
+			authorization_response_iss_parameter_supported: true,
 		});
 	});
 

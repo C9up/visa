@@ -48,14 +48,24 @@ export interface VisaStore {
 
 	saveRefreshToken(token: RefreshToken): Promise<void>;
 	findRefreshToken(tokenHash: string): Promise<RefreshToken | null>;
-	/** Same atomicity requirement as a code: rotation depends on it. */
+	/**
+	 * Same atomicity requirement as a code: rotation depends on it. One
+	 * conditional write — `consumed_at IS NULL AND revoked_at IS NULL` — that
+	 * answers `false` when the token was already consumed OR revoked, so a
+	 * revocation landing mid-rotation stops it.
+	 *
+	 * The token endpoint saves the rotated pair BEFORE calling this, and reads
+	 * a `false` as a reuse: it then calls {@link revokeFamily}.
+	 */
 	consumeRefreshToken(tokenHash: string, at: Date): Promise<boolean>;
 	/**
 	 * Revoke every token of a family, refresh and access alike.
 	 *
-	 * Called when a consumed refresh token comes back: that is a leak, and the
-	 * only safe answer is to end the session it belongs to rather than guess
-	 * which of the two holders is the thief.
+	 * Called when a spent code or refresh token comes back, or loses the race
+	 * to be spent: that is a leak, and the only safe answer is to end the
+	 * session it belongs to rather than guess which of the two holders is the
+	 * thief. It MUST reach every row of the family that exists when it runs —
+	 * a pair saved just before is the one a racing rotation would keep.
 	 */
 	revokeFamily(familyId: string, at: Date): Promise<void>;
 

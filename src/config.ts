@@ -24,6 +24,11 @@ export interface VisaConfigInput {
 	refreshTokenTtlSeconds?: number;
 	/** Seconds. Default 30 — a code is exchanged in milliseconds. */
 	codeTtlSeconds?: number;
+	/**
+	 * Seconds a consent page may stay open before its answer is refused.
+	 * Default 600 — see `VisaManager.consentTicket`.
+	 */
+	consentTicketTtlSeconds?: number;
 	issueRefreshTokens?: boolean;
 	/** See `AuthorizeOptions.allowPlainChallenge` — off, and stay off. */
 	allowPlainChallenge?: boolean;

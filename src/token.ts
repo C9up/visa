@@ -21,6 +21,7 @@ import {
 	validateResources,
 } from "./resource.js";
 import type { VisaStore } from "./store.js";
+import { assertTtlSeconds } from "./ttl.js";
 import type { Client, GrantType, TokenResponse } from "./types.js";
 
 export interface TokenOptions {
@@ -48,6 +49,10 @@ export async function token(
 	options: TokenOptions = {},
 	now: Date = new Date(),
 ): Promise<TokenResponse> {
+	// `VisaManager` checks these at boot; this function is exported and may be
+	// driven without it.
+	assertTtlSeconds("accessTokenTtlSeconds", options.accessTokenTtlSeconds);
+	assertTtlSeconds("refreshTokenTtlSeconds", options.refreshTokenTtlSeconds);
 	const grant = asString(request.grant_type);
 	if (grant === undefined) {
 		throw new E_VISA_OAUTH_ERROR("invalid_request", "grant_type is required.");
@@ -158,12 +163,6 @@ async function exchangeCode(
 		throw invalid;
 	}
 
-	// The single-use gate. Atomic in the store, so two requests racing with the
-	// same code cannot both pass.
-	if (!(await store.consumeAuthorizationCode(record.codeHash, now))) {
-		throw invalid;
-	}
-
 	// RFC 8707: a request may narrow the resources the code was bound to,
 	// never widen them — the user saw the list at authorization time.
 	const resources = narrowResources(
@@ -174,7 +173,10 @@ async function exchangeCode(
 		record.resources ?? [],
 	);
 
-	return issue(
+	// The single-use gate is the consume, atomic in the store, so two requests
+	// racing with the same code cannot both pass — and the one that loses is a
+	// second use of the code (RFC 6749 §4.1.2), which revokes what it bought.
+	return issueThenConsume(
 		{
 			client,
 			userId: record.userId,
@@ -182,6 +184,8 @@ async function exchangeCode(
 			familyId: codeFamily(record.codeHash),
 			resources,
 		},
+		() => store.consumeAuthorizationCode(record.codeHash, now),
+		invalid,
 		store,
 		options,
 		now,
@@ -215,7 +219,9 @@ function verifierMatches(
  * Every use mints a new refresh token and consumes the old one. A consumed
  * token coming back is a replay — the legitimate holder has already moved on
  * — and since there is no way to tell the thief from the victim, the whole
- * family is revoked and both are signed out (RFC 9700 §4.14.2).
+ * family is revoked and both are signed out (RFC 9700 §4.14.2). "Coming back"
+ * includes two presentations at once: the read below sees neither as spent,
+ * so the consume's own answer decides — see {@link issueThenConsume}.
  */
 async function exchangeRefresh(
 	request: TokenRequest,
@@ -257,9 +263,7 @@ async function exchangeRefresh(
 		record.resources ?? [],
 	);
 
-	if (!(await store.consumeRefreshToken(record.tokenHash, now))) throw invalid;
-
-	return issue(
+	return issueThenConsume(
 		{
 			client,
 			...(record.userId === undefined ? {} : { userId: record.userId }),
@@ -278,6 +282,8 @@ async function exchangeRefresh(
 				resources: record.resources ?? [],
 			},
 		},
+		() => store.consumeRefreshToken(record.tokenHash, now),
+		invalid,
 		store,
 		options,
 		now,
@@ -350,6 +356,40 @@ interface Issued {
 	 * resources — the case of a code exchange, where both halves are the grant.
 	 */
 	refresh?: { scopes: string[]; resources: string[] };
+}
+
+/**
+ * Mint the pair, THEN spend the code or refresh token that bought it.
+ *
+ * The consume is the one atomic step, so its answer — not the read before it
+ * — says whether this presentation is a reuse. Losing it means another
+ * request spent the same credential first: a replay or a race, and RFC 9700
+ * §4.14.2 (refresh) and RFC 6749 §4.1.2 (code) both answer it by ending the
+ * family. Both holders are signed out, since nothing tells the thief from
+ * the victim.
+ *
+ * Saved BEFORE the consume, not after, so no rotation can outrun that
+ * revocation: whoever wins the consume has already written its pair, and any
+ * request that later finds the credential spent — the loser here, or a replay
+ * reading `consumedAt` — revokes a family that already holds it. Written the
+ * other way round, a pair saved after a concurrent `revokeFamily` would land in
+ * a revoked family alive. The pair a loser wrote is revoked with the rest, and
+ * its plaintext never leaves this function.
+ */
+async function issueThenConsume(
+	grant: Issued & { familyId: string },
+	consume: () => Promise<boolean>,
+	invalid: E_VISA_OAUTH_ERROR,
+	store: VisaStore,
+	options: TokenOptions,
+	now: Date,
+): Promise<TokenResponse> {
+	const response = await issue(grant, store, options, now);
+	if (!(await consume())) {
+		await store.revokeFamily(grant.familyId, now);
+		throw invalid;
+	}
+	return response;
 }
 
 /** Mint the pair and store both, hashed. */

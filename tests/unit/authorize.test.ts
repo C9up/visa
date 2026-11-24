@@ -9,8 +9,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { errorRedirect } from "../../src/authorize.js";
 import { E_VISA_OAUTH_ERROR } from "../../src/errors.js";
-import { authorizeToCode, harness, pkce, REDIRECT } from "./helpers.js";
+import { authorizeToCode, harness, ISSUER, pkce, REDIRECT } from "./helpers.js";
 
 describe("visa > authorize > what may be redirected", () => {
 	it("refuses to bounce an error to an unregistered redirect URI", async () => {
@@ -69,6 +70,76 @@ describe("visa > authorize > what may be redirected", () => {
 		expect(url.origin + url.pathname).toBe(REDIRECT);
 		expect(url.searchParams.get("error")).toBe("invalid_scope");
 		expect(url.searchParams.get("state")).toBe("xyz");
+	});
+});
+
+/**
+ * RFC 9207: every authorization response names the server that produced it,
+ * so a client using several servers can tell a code injected from another
+ * one (the mix-up attack, RFC 9700 §4.4).
+ */
+describe("visa > authorize > the issuer on the response (RFC 9207)", () => {
+	const request = (h: Awaited<ReturnType<typeof harness>>) => ({
+		response_type: "code",
+		client_id: h.client.id,
+		redirect_uri: REDIRECT,
+		code_challenge: pkce().challenge,
+		code_challenge_method: "S256",
+		state: "xyz",
+	});
+
+	it("names the issuer on a success, a refusal and an error redirect", async () => {
+		const h = await harness();
+		const outcome = await h.visa.authorize(request(h), "user-1");
+		if (outcome.type !== "consent") throw new Error("expected consent");
+
+		const success = new URL(await h.visa.grant(outcome.request, "user-1"));
+		const denied = new URL(h.visa.deny(outcome.request));
+		const failed = await h.visa.authorize(
+			{ ...request(h), scope: "admin" },
+			"user-1",
+		);
+		if (failed.type !== "redirect") throw new Error("expected a redirect");
+		const error = new URL(failed.url);
+
+		for (const url of [success, denied, error]) {
+			expect(url.searchParams.getAll("iss")).toEqual([ISSUER]);
+			expect(url.searchParams.get("state")).toBe("xyz");
+		}
+		expect(success.searchParams.get("code")).not.toBeNull();
+		expect(denied.searchParams.get("error")).toBe("access_denied");
+		expect(error.searchParams.get("error")).toBe("invalid_scope");
+	});
+
+	it("names it on a remembered consent's silent redirect too", async () => {
+		const h = await harness();
+		const first = await h.visa.authorize(request(h), "user-1");
+		if (first.type !== "consent") throw new Error("expected consent");
+		await h.visa.grant(first.request, "user-1");
+
+		const again = await h.visa.authorize(request(h), "user-1");
+		if (again.type !== "redirect") throw new Error("expected a redirect");
+		expect(new URL(again.url).searchParams.get("iss")).toBe(ISSUER);
+	});
+
+	it("sends the issuer as it is announced, trailing slash trimmed", async () => {
+		const h = await harness({}, { issuer: `${ISSUER}/` });
+		const outcome = await h.visa.authorize(request(h), "user-1");
+		if (outcome.type !== "consent") throw new Error("expected consent");
+		const url = new URL(h.visa.deny(outcome.request));
+		expect(url.searchParams.get("iss")).toBe(ISSUER);
+	});
+
+	it("replaces an `iss` the registered redirect URI already carried", () => {
+		const url = new URL(
+			errorRedirect(
+				"https://app.example.test/cb?iss=https://evil.example.test",
+				new E_VISA_OAUTH_ERROR("access_denied"),
+				{ issuer: ISSUER },
+			),
+		);
+		expect(url.searchParams.getAll("iss")).toEqual([ISSUER]);
+		expect(url.searchParams.has("state")).toBe(false);
 	});
 });
 
@@ -441,6 +512,147 @@ describe("visa > authorize > consent", () => {
 		const url = new URL(h.visa.deny(outcome.request));
 		expect(url.searchParams.get("error")).toBe("access_denied");
 		expect(url.searchParams.get("state")).toBe("xyz");
+	});
+});
+
+/**
+ * A remembered consent stands for "this user agreed to give THAT application
+ * these scopes". For a public client whose code lands on the user's own
+ * machine, nothing proves the next request comes from that application rather
+ * than any other program presenting its client_id (RFC 8252 §8.6).
+ */
+describe("visa > authorize > consent for a client whose identity nothing proves", () => {
+	async function consentThenReturn(
+		redirectUris: string[],
+		first: string,
+		second: string,
+		overrides: Partial<Parameters<typeof harness>[0]> = {},
+	): Promise<{ firstType: string; secondType: string }> {
+		const h = await harness({
+			id: "desktop-app",
+			redirectUris,
+			tokenEndpointAuthMethod: "none",
+			...overrides,
+		});
+		const request = (redirect: string) => ({
+			response_type: "code",
+			client_id: "desktop-app",
+			redirect_uri: redirect,
+			scope: "profile",
+			code_challenge: pkce().challenge,
+			code_challenge_method: "S256",
+		});
+		const day1 = await h.visa.authorize(request(first), "user-7");
+		if (day1.type === "consent") await h.visa.grant(day1.request, "user-7");
+		const day2 = await h.visa.authorize(request(second), "user-7");
+		return { firstType: day1.type, secondType: day2.type };
+	}
+
+	it("asks again when a public loopback client comes back on another port", async () => {
+		// The other port may be another program: it chose its own PKCE pair, so
+		// a silent redirect would hand it the user's tokens.
+		const outcome = await consentThenReturn(
+			["http://127.0.0.1/callback"],
+			"http://127.0.0.1:51000/callback",
+			"http://127.0.0.1:6666/callback",
+		);
+		expect(outcome).toEqual({ firstType: "consent", secondType: "consent" });
+	});
+
+	it("asks again on the very same loopback port and on the IPv6 literal", async () => {
+		// A fixed port is anyone's while the real application is not running.
+		expect(
+			await consentThenReturn(
+				["http://127.0.0.1:51000/callback"],
+				"http://127.0.0.1:51000/callback",
+				"http://127.0.0.1:51000/callback",
+			),
+		).toEqual({ firstType: "consent", secondType: "consent" });
+		expect(
+			await consentThenReturn(
+				["http://[::1]/callback"],
+				"http://[::1]:51000/callback",
+				"http://[::1]:6666/callback",
+			),
+		).toEqual({ firstType: "consent", secondType: "consent" });
+	});
+
+	it("asks again for http://localhost and for a private-use scheme", async () => {
+		for (const uri of [
+			"http://localhost:8080/callback",
+			"https://localhost/callback",
+			"https://dev.localhost/callback",
+			"com.example.app:/oauth/callback",
+		]) {
+			expect(await consentThenReturn([uri], uri, uri)).toEqual({
+				firstType: "consent",
+				secondType: "consent",
+			});
+		}
+	});
+
+	it("asks even when such a client is marked trusted", async () => {
+		const outcome = await consentThenReturn(
+			["http://127.0.0.1/callback"],
+			"http://127.0.0.1:51000/callback",
+			"http://127.0.0.1:6666/callback",
+			{ trusted: true },
+		);
+		expect(outcome).toEqual({ firstType: "consent", secondType: "consent" });
+	});
+
+	it("still remembers the consent of a public client on an https redirect", async () => {
+		// The code lands on a host the client owns: that is proof enough.
+		const outcome = await consentThenReturn(
+			["https://spa.example.test/callback"],
+			"https://spa.example.test/callback",
+			"https://spa.example.test/callback",
+		);
+		expect(outcome).toEqual({ firstType: "consent", secondType: "redirect" });
+	});
+
+	it("still remembers the consent of a confidential client on a loopback redirect", async () => {
+		// Its secret proves who redeems the code, wherever the code lands.
+		const outcome = await consentThenReturn(
+			["http://127.0.0.1/callback"],
+			"http://127.0.0.1:51000/callback",
+			"http://127.0.0.1:6666/callback",
+			{ tokenEndpointAuthMethod: "client_secret_basic" },
+		);
+		expect(outcome).toEqual({ firstType: "consent", secondType: "redirect" });
+	});
+
+	it("gives another local program nothing it can redeem without the user", async () => {
+		const h = await harness({
+			id: "desktop-app",
+			redirectUris: ["http://127.0.0.1/callback"],
+			tokenEndpointAuthMethod: "none",
+		});
+		const real = await h.visa.authorize(
+			{
+				response_type: "code",
+				client_id: "desktop-app",
+				redirect_uri: "http://127.0.0.1:51000/callback",
+				code_challenge: pkce().challenge,
+				code_challenge_method: "S256",
+			},
+			"user-7",
+		);
+		if (real.type !== "consent") throw new Error("expected consent");
+		await h.visa.grant(real.request, "user-7");
+
+		const rogue = await h.visa.authorize(
+			{
+				response_type: "code",
+				client_id: "desktop-app",
+				redirect_uri: "http://127.0.0.1:6666/callback",
+				code_challenge: pkce().challenge,
+				code_challenge_method: "S256",
+			},
+			"user-7",
+		);
+		// The screen, not a code: the user sees the request and can refuse it.
+		expect(rogue.type).toBe("consent");
 	});
 });
 

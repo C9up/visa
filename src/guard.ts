@@ -29,6 +29,7 @@ import {
 import { verifyAccessToken } from "./introspect.js";
 import { wwwAuthenticate } from "./protectedResource.js";
 import type { VisaStore } from "./store.js";
+import { assertTtlSeconds } from "./ttl.js";
 
 /**
  * The user shape a guard hands back.
@@ -237,6 +238,10 @@ export class VisaGuard {
 	readonly #config: VisaGuardConfig;
 
 	constructor(config: VisaGuardConfig) {
+		// At boot, like the server's lifetimes: `Number(env.get('TTL'))` with
+		// the variable unset is `NaN`, and every token minted under it would
+		// never expire.
+		assertTtlSeconds("expiresInSeconds", config.expiresInSeconds);
 		this.#config = config;
 		this.name = config.name ?? "visa";
 	}
@@ -277,6 +282,8 @@ export class VisaGuard {
 			throw new E_VISA_NO_TOKEN_CLIENT();
 		}
 		const userId = typeof user === "string" ? user : user.id;
+		// Per call too: the option arrives at runtime, from anywhere.
+		assertTtlSeconds("expiresInSeconds", options.expiresInSeconds);
 		const ttl =
 			options.expiresInSeconds ?? this.#config.expiresInSeconds ?? DEFAULT_TTL;
 		const secret = randomToken();

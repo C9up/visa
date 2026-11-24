@@ -17,6 +17,7 @@ import { hashSecret, randomToken } from "./crypto.js";
 import { E_VISA_OAUTH_ERROR, E_VISA_UNREDIRECTABLE } from "./errors.js";
 import { readResourceParameter, validateResources } from "./resource.js";
 import type { VisaStore } from "./store.js";
+import { assertTtlSeconds } from "./ttl.js";
 import type { AuthorizationCode, Client } from "./types.js";
 
 /** The query as it arrived, untrusted. */
@@ -326,6 +327,9 @@ export async function issueAuthorizationCode(
 	options: AuthorizeOptions = {},
 	now: Date = new Date(),
 ): Promise<string> {
+	// Checked here too: this function is exported, and `VisaManager`'s boot
+	// check does not cover a caller that drives it directly.
+	assertTtlSeconds("codeTtlSeconds", options.codeTtlSeconds);
 	const code = randomToken();
 	const ttl = options.codeTtlSeconds ?? 30;
 	const record: AuthorizationCode = {
@@ -347,10 +351,20 @@ export async function issueAuthorizationCode(
 	return code;
 }
 
-/** Build the redirect a successful authorization ends on. */
+/**
+ * Build the redirect a successful authorization ends on.
+ *
+ * `issuer` travels as `iss` (RFC 9207 §2): a client that talks to several
+ * authorization servers checks it against the one it sent the user to, which
+ * is how it catches a code injected from another server (the mix-up attack,
+ * RFC 9700 §4.4). Required, not optional: the metadata announces
+ * `authorization_response_iss_parameter_supported`, and a client that reads
+ * it rejects a response without `iss` (RFC 9207 §2.4).
+ */
 export function successRedirect(
 	validated: ValidatedRequest,
 	code: string,
+	issuer: string,
 ): string {
 	const url = new URL(validated.redirectUri);
 	url.searchParams.set("code", code);
@@ -358,20 +372,28 @@ export function successRedirect(
 	// inventing a state would break the client's own CSRF check.
 	if (validated.state !== undefined)
 		url.searchParams.set("state", validated.state);
+	url.searchParams.set("iss", issuer);
 	return url.toString();
 }
 
-/** Build the redirect a refused or failed authorization ends on. */
+/**
+ * Build the redirect a refused or failed authorization ends on.
+ *
+ * It carries `iss` as a success does — RFC 9207 §2 covers error responses
+ * too. An options object rather than two trailing strings, so `state` and
+ * `issuer` cannot be passed in each other's place.
+ */
 export function errorRedirect(
 	redirectUri: string,
 	error: E_VISA_OAUTH_ERROR,
-	state?: string,
+	options: { issuer: string; state?: string | undefined },
 ): string {
 	const url = new URL(redirectUri);
 	url.searchParams.set("error", error.oauthCode);
 	if (error.description !== undefined) {
 		url.searchParams.set("error_description", error.description);
 	}
-	if (state !== undefined) url.searchParams.set("state", state);
+	if (options.state !== undefined) url.searchParams.set("state", options.state);
+	url.searchParams.set("iss", options.issuer);
 	return url.toString();
 }

@@ -116,7 +116,13 @@ export class MemoryStore implements VisaStore {
 
 	async consumeRefreshToken(tokenHash: string, at: Date): Promise<boolean> {
 		const token = this.#refreshTokens.get(tokenHash);
-		if (token === undefined || token.consumedAt !== undefined) return false;
+		if (
+			token === undefined ||
+			token.consumedAt !== undefined ||
+			token.revokedAt !== undefined
+		) {
+			return false;
+		}
 		token.consumedAt = at;
 		return true;
 	}

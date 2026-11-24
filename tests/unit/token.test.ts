@@ -9,13 +9,16 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { issueAuthorizationCode } from "../../src/authorize.js";
 import { hashSecret } from "../../src/crypto.js";
 import { E_VISA_OAUTH_ERROR } from "../../src/errors.js";
+import { token } from "../../src/token.js";
 import type { TokenResponse } from "../../src/types.js";
 import {
 	authorizeToCode,
 	basic,
 	codeFrom,
+	creds,
 	harness,
 	pkce,
 	REDIRECT,
@@ -586,5 +589,38 @@ describe("visa > token > grants and clients", () => {
 			body: {},
 		});
 		expect(credentials.clientId).toBe("a b");
+	});
+});
+
+describe("visa > token > lifetimes, when driven without the manager", () => {
+	it("refuses a lifetime that would mint a token or a code that never expires", async () => {
+		// `token()` and `issueAuthorizationCode()` are exported: the manager's
+		// boot check does not stand in front of them.
+		const h = await harness();
+		for (const options of [
+			{ accessTokenTtlSeconds: Number.NaN },
+			{ refreshTokenTtlSeconds: Number.POSITIVE_INFINITY },
+		]) {
+			await expect(
+				token({ grant_type: "client_credentials" }, creds(h), h.store, options),
+			).rejects.toMatchObject({ code: "E_VISA_INVALID_TTL" });
+		}
+
+		const outcome = await h.visa.authorize(
+			{
+				response_type: "code",
+				client_id: h.client.id,
+				redirect_uri: REDIRECT,
+				code_challenge: pkce().challenge,
+				code_challenge_method: "S256",
+			},
+			"user-1",
+		);
+		if (outcome.type !== "consent") throw new Error("expected consent");
+		await expect(
+			issueAuthorizationCode(outcome.request, "user-1", h.store, {
+				codeTtlSeconds: 0,
+			}),
+		).rejects.toMatchObject({ code: "E_VISA_INVALID_TTL" });
 	});
 });

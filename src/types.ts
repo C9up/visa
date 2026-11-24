@@ -46,7 +46,13 @@ export interface Client {
 	/** What this client may ever ask for; a request narrows it, never widens it. */
 	scopes: string[];
 	tokenEndpointAuthMethod: ClientAuthMethod;
-	/** Skip the consent screen — for a first-party application you own. */
+	/**
+	 * Skip the consent screen — for a first-party application you own.
+	 *
+	 * Not for a public client (`none`) on a loopback or private-use-scheme
+	 * redirect: nothing proves which program receives its code, so the screen
+	 * is shown anyway (RFC 8252 §8.6).
+	 */
 	trusted?: boolean;
 }
 
